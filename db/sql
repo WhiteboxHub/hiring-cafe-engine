@@ -1,0 +1,187 @@
+/*
+  Job Application Engine - Database Initialization
+  Target System: MySQL / MariaDB
+  Version: 1.1
+  Changes: Renamed 'job_queue' to 'job_listings'
+*/
+
+SET NAMES utf8mb4;
+SET FOREIGN_KEY_CHECKS = 0;
+
+-- -----------------------------------------------------
+-- 1. Table: ats_platforms
+-- The "Brain": Defines the scraping strategy (Workday, Greenhouse, Custom).
+-- -----------------------------------------------------
+DROP TABLE IF EXISTS `ats_platforms`;
+CREATE TABLE `ats_platforms` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `name` VARCHAR(50) NOT NULL COMMENT 'e.g., Workday, Greenhouse, Lever, Custom',
+  `class_handler` VARCHAR(100) NOT NULL COMMENT 'Python path e.g., strategies.custom.InsightGlobalStrategy',
+  `is_headless_required` BOOLEAN DEFAULT TRUE,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- -----------------------------------------------------
+-- 2. Table: job_sites
+-- The "Target": Specific company details (URLs, Domain).
+-- -----------------------------------------------------
+DROP TABLE IF EXISTS `job_sites`;
+CREATE TABLE `job_sites` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `company_name` VARCHAR(100) NOT NULL,
+  `domain` VARCHAR(255) UNIQUE NOT NULL,
+  `ats_platform_id` INT DEFAULT NULL,
+  `category` ENUM('System integrator', 'Consulting firm', 'Staffing vendor', 'Product Company') NOT NULL,
+  
+  -- Navigation & Templates
+  `search_url_template` TEXT NOT NULL COMMENT 'URL with {keyword}, {location} placeholders',
+  `apply_url_template` TEXT DEFAULT NULL COMMENT 'URL with {job_id} placeholder if predictable',
+  
+  -- Bot Defense & Network
+  `cf_clearance_required` BOOLEAN DEFAULT FALSE COMMENT 'Is Cloudflare active?',
+  `proxy_region` VARCHAR(10) DEFAULT 'US',
+  
+  -- Operational Flags
+  `is_active` BOOLEAN DEFAULT TRUE,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  
+  CONSTRAINT `fk_site_platform` FOREIGN KEY (`ats_platform_id`) REFERENCES `ats_platforms`(`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- -----------------------------------------------------
+-- 3. Table: site_selectors
+-- The "Map": Stores CSS/XPath and extraction logic JSON.
+-- -----------------------------------------------------
+DROP TABLE IF EXISTS `site_selectors`;
+CREATE TABLE `site_selectors` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `ats_platform_id` INT DEFAULT NULL COMMENT 'Default selectors for a generic ATS',
+  `job_site_id` INT DEFAULT NULL COMMENT 'Specific override for a single site',
+  
+  `type` ENUM('listing', 'application') NOT NULL,
+  `config_json` JSON NOT NULL COMMENT 'Configuration for scraper logic',
+  
+  `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  
+  CONSTRAINT `chk_selector_target` CHECK (`ats_platform_id` IS NOT NULL OR `job_site_id` IS NOT NULL),
+  CONSTRAINT `fk_selector_platform` FOREIGN KEY (`ats_platform_id`) REFERENCES `ats_platforms`(`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_selector_site` FOREIGN KEY (`job_site_id`) REFERENCES `job_sites`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- -----------------------------------------------------
+-- 4. Table: job_listings (Renamed from job_queue)
+-- The "Inventory": Stores found job positions and their state.
+-- -----------------------------------------------------
+DROP TABLE IF EXISTS `job_listings`;
+CREATE TABLE `job_listings` (
+  `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+  `job_site_id` INT NOT NULL,
+  
+  -- Core Job Data
+  `external_job_id` VARCHAR(100) NOT NULL,
+  `job_title` VARCHAR(255),
+  `job_url` TEXT NOT NULL,
+  
+  -- Pipeline State
+  `status` ENUM('discovered', 'ready_to_apply', 'applied', 'failed', 'blacklisted') DEFAULT 'discovered',
+  `attempts` INT DEFAULT 0,
+  `last_error` TEXT,
+  
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  
+  UNIQUE KEY `unique_job_per_site` (`job_site_id`, `external_job_id`),
+  CONSTRAINT `fk_listing_site` FOREIGN KEY (`job_site_id`) REFERENCES `job_sites`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+SET FOREIGN_KEY_CHECKS = 1;
+
+-- =====================================================
+-- SEED DATA: Insight Global Automation Config
+-- =====================================================
+
+-- 1. Insert the Strategy (The "Brain")
+INSERT INTO `ats_platforms` 
+(`id`, `name`, `class_handler`, `is_headless_required`) 
+VALUES 
+(1, 'Insight Global Custom', 'strategies.custom.InsightGlobalStrategy', 1)
+ON DUPLICATE KEY UPDATE `name`=`name`; -- Prevents errors if run twice
+
+-- 2. Insert the Site (The "Target")
+INSERT INTO `job_sites` 
+(
+    `company_name`, 
+    `domain`, 
+    `ats_platform_id`, 
+    `category`, 
+    `search_url_template`, 
+    `apply_url_template`, 
+    `cf_clearance_required`, 
+    `proxy_region`
+) 
+VALUES 
+(
+    'Insight Global', 
+    'insightglobal.com', 
+    1, -- Links to 'Insight Global Custom'
+    'Staffing vendor', 
+    'https://insightglobal.com/jobs/find_a_job/?srch={keyword}&zip={location}', 
+    'https://jobs.insightglobal.com/users/jobapplynoaccount.aspx?jobid={job_id}', 
+    0, 
+    'US'
+);
+
+-- 3. Insert Selectors (The "Map")
+
+-- A. LISTING (Get Jobs) - Updated with new HTML analysis
+INSERT INTO `site_selectors` (`job_site_id`, `type`, `config_json`)
+VALUES 
+(
+    (SELECT id FROM job_sites WHERE domain = 'insightglobal.com'),
+    'listing', 
+    '{
+        "container": "div.result", 
+        "pagination_type": "click_next",
+        "pagination_selector": "a[title=\\"Page Forward\\"]",
+        "fields": {
+            "job_id": {
+                "selector": "button[id=\\"btnSaveJob\\"]", 
+                "attr": "jobId"
+            },
+            "title": {
+                "selector": ".job-title a", 
+                "type": "text"
+            },
+            "url": {
+                "selector": ".job-title a", 
+                "attr": "href"
+            }
+        }
+    }'
+);
+
+-- B. APPLICATION (Apply) - Placeholder for standard form inputs
+INSERT INTO `site_selectors` (`job_site_id`, `type`, `config_json`)
+VALUES 
+(
+    (SELECT id FROM job_sites WHERE domain = 'insightglobal.com'),
+    'application', 
+    '{
+        "flow_type": "legacy_form",
+        "steps": [
+            {
+                "order": 1,
+                "wait_for": "#application_form",
+                "inputs": {
+                    "first_name": "input[id*=\\"FirstName\\"]",
+                    "last_name": "input[id*=\\"LastName\\"]",
+                    "email": "input[id*=\\"Email\\"]",
+                    "phone": "input[id*=\\"Phone\\"]",
+                    "resume_upload": "input[type=\\"file\\"]",
+                    "submit_btn": "#btnSubmitApplication"
+                }
+            }
+        ]
+    }'
+);

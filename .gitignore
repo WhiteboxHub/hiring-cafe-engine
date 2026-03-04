@@ -1,0 +1,12 @@
+venv/
+.env
+__pycache__/
+*.pyc
+*.log
+logs/
+*.db
+*.sqlite
+hiring_cafe_jobs.json
+hiring_cafe_by_ats.json
+chrome_profile/
+data/*.duckdb

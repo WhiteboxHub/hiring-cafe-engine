@@ -1,9 +1,5 @@
 {
-    "search_keywords": [
-    "AI+Engineer",
-    "ML+Engineer",
-    "LLM+Engineer"
-    ],
+    "search_keywords": ["AI+Engineer", "ML+Engineer", "LLM+Engineer"],
     "date_fetched_past_n_days": 2,
     "_comment": "date_fetched_past_n_days: 2=24h, 4=3d, 14=1w, 21=2w, -1=all. Presets: 24h, 3d, 1w, 2w, all. Default 2 (24 hours)."
 }
