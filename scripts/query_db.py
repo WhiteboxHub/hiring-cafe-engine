@@ -24,16 +24,16 @@ def run_query(sql_query):
         result = conn.execute(sql_query).df()
         
         if len(result) == 0:
-            print("\n❌ No results found")
+            print("\n No results found")
         else:
-            print(f"\n✅ Found {len(result)} row(s):\n")
+            print(f"\n Found {len(result)} row(s):\n")
             print(result.to_string())
         
         conn.close()
         print("\n" + "=" * 70)
         
     except Exception as e:
-        print(f"❌ Query failed: {e}")
+        print(f"Query failed: {e}")
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:

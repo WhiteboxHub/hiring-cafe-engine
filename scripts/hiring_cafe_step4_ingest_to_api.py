@@ -113,7 +113,7 @@
 #     # Get authentication token
 #     token = auth_service.get_access_token()
 #     if not token:
-#         logger.error("❌ Failed to obtain authentication token. Check .env AUTH settings.")
+#         logger.error("Failed to obtain authentication token. Check .env AUTH settings.")
 #         return
 
 #     # Base URL for API calls
@@ -164,7 +164,7 @@
 #                         if details:
 #                             parsed_info.update({k: v for k, v in details.items() if v})
 #                     except Exception as e:
-#                         logger.warning(f"⚠️ Could not extract workable details for {job_id} due to browser error: {e}")
+#                         logger.warning(f"Could not extract workable details for {job_id} due to browser error: {e}")
                 
 #                 # Construct job listing object for API
 #                 job_listing = {
@@ -199,7 +199,7 @@
 #         if driver:
 #             driver.quit()
     
-#     logger.info(f"✅ Finished processing. Total jobs sent to API: {processed_count}")
+#     logger.info(f"Finished processing. Total jobs sent to API: {processed_count}")
 
 # def _send_batch(url, token, batch):
 #     """Helper to send a batch of positions to the API."""
@@ -214,7 +214,7 @@
 #         res_data = response.json()
 #         logger.info(f"🚀 Batch success: {res_data.get('inserted', 0)} inserted, {res_data.get('skipped', 0)} duplicates")
 #     except Exception as e:
-#         logger.error(f"❌ Failed to send batch to API: {e}")
+#         logger.error(f"Failed to send batch to API: {e}")
 
 # if __name__ == "__main__":
 #     import argparse
@@ -388,7 +388,7 @@ def ingest_to_api(json_path):
     # Get authentication token
     token = auth_service.get_access_token()
     if not token:
-        logger.error("❌ Failed to obtain authentication token. Check .env AUTH settings.")
+        logger.error("Failed to obtain authentication token. Check .env AUTH settings.")
         return
 
     # Base URL for API calls
@@ -479,7 +479,7 @@ def ingest_to_api(json_path):
         if driver:
             driver.quit()
     
-    logger.info(f"✅ Finished processing. Total jobs sent to API: {processed_count}")
+    logger.info(f"Finished processing. Total jobs sent to API: {processed_count}")
 
 def _send_batch(url, token, batch):
     """Helper to send a batch of positions to the API."""
@@ -492,15 +492,15 @@ def _send_batch(url, token, batch):
         response = requests.post(url, json=payload, headers=headers, timeout=30)
         response.raise_for_status()
         res_data = response.json()
-        logger.info(f"🚀 Batch success: {res_data.get('inserted', 0)} inserted, {res_data.get('skipped', 0)} duplicates")
+        logger.info(f"Batch success: {res_data.get('inserted', 0)} inserted, {res_data.get('skipped', 0)} duplicates")
     except Exception as e:
-        logger.error(f"❌ Failed to send batch to API: {e}")
+        logger.error(f"Failed to send batch to API: {e}")
 
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Ingest grouped job data into the website API.")
     parser.add_argument("--input", help="Path to the by_ats JSON file", 
-                       default=str(ROOT.parent / "hiring_cafe_by_ats.json"))
+                       default=str(ROOT / "hiring_cafe_by_ats.json"))
     args = parser.parse_args()
     
     ingest_to_api(args.input)

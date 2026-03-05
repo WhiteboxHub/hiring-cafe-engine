@@ -339,7 +339,7 @@ def _write_run_log(log_path: Path, summary: dict) -> None:
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
-def main() -> int:
+def run_pipeline(args_list=None) -> dict:
     parser = argparse.ArgumentParser(
         description="Run the full hiring.cafe pipeline (Steps 1 → 2 → 3)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -353,7 +353,7 @@ def main() -> int:
                         help="Skip combining. Only run Step 4 (API Ingestion).")
     parser.add_argument("--limit", type=int, metavar="N", default=None,
                         help="Only enrich first N jobs in Step 2 (for testing).")
-    args = parser.parse_args()
+    args = parser.parse_args(args_list)
 
     run_start = time.time()
     run_id    = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -381,13 +381,13 @@ def main() -> int:
     else:
         if not STEP1.exists():
             print(f"❌ Step 1 script not found: {STEP1}", file=sys.stderr)
-            return 1
+            return {"status": "error", "error": "Step 1 script not found"}
         _banner("STEP 1 — Scraping job URLs from hiring.cafe", "-")
         ok = _run_step("Step 1: Scrape jobs", STEP1)
         results["step1"] = "ok" if ok else "failed"
         if not ok:
             _banner("❌ Pipeline stopped — Step 1 failed")
-            return 1
+            return {"status": "error", "error": "Step 1 failed"}
 
         print(f"\n   🧹 Clearing stale ATS fields from previous run...")
         cleared = _clear_ats_fields(JOBS_FILE)
@@ -398,7 +398,7 @@ def main() -> int:
             print(f"\n   ⚠️  Step 1 found 0 jobs — hiring.cafe may be blocking requests.")
             print(f"   ℹ️  Wait 30 minutes and try again, or check your internet connection.")
             _banner("❌ Pipeline stopped — 0 jobs scraped")
-            return 1
+            return {"status": "error", "error": "0 jobs scraped"}
 
     # ── STEP 2 ────────────────────────────────────────────────────────────────
     if args.skip_step2:
@@ -407,7 +407,7 @@ def main() -> int:
     else:
         if not STEP2.exists():
             print(f"❌ Step 2 script not found: {STEP2}", file=sys.stderr)
-            return 1
+            return {"status": "error", "error": "Step 2 script not found"}
 
         # Kill Chrome again between steps — fresh session for Step 2
         print(f"\n   🧹 Resetting Chrome before Step 2...")
@@ -434,7 +434,7 @@ def main() -> int:
     else:
         if not STEP3.exists():
             print(f"❌ Step 3 script not found: {STEP3}", file=sys.stderr)
-            return 1
+            return {"status": "error", "error": "Step 3 script not found"}
         _banner("STEP 3 — Combining jobs by ATS platform", "-")
         step3_args = ["--input", str(JOBS_FILE), "--output", str(BY_ATS_FILE)]
         ok = _run_step("Step 3: Combine by ATS", STEP3, step3_args)
@@ -491,11 +491,13 @@ def main() -> int:
     print("=" * 60)
 
     if results.get("step1") == "failed" or results.get("step3") == "failed":
-        return 1
-    return 0
+        return {"status": "failed", "jobs_saved": jobs_with_ats, "jobs_found": jobs_count, "timestamp": _now()}
+    
+    return {"status": "success", "jobs_saved": jobs_with_ats, "jobs_found": jobs_count, "timestamp": _now()}
 
 
 if __name__ == "__main__":
     if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
         sys.stdout.reconfigure(encoding='utf-8')
-    sys.exit(main())
+    res = run_pipeline()
+    sys.exit(1 if res.get("status") in ["error", "failed"] else 0)

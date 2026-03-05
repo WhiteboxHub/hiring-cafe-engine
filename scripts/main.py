@@ -22,11 +22,11 @@ def main():
     # Override settings based on CLI arguments
     if args.dry_run:
         settings.DRY_RUN = True
-        logger.info("🔍 Mode: DRY RUN (No applications will be submitted)")
+        logger.info("Mode: DRY RUN (No applications will be submitted)")
         
     if args.headless:
         settings.HEADLESS = True
-        logger.info("👻 Mode: HEADLESS Browser")
+        logger.info("Mode: HEADLESS Browser")
 
     try:
         # Validate configuration (optional - comment out if not needed)
@@ -37,7 +37,7 @@ def main():
         runner.run(site_filter=args.site)
         
     except Exception as e:
-        logger.critical(f"❌ Fatal error: {e}")
+        logger.critical(f"Fatal error: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1)

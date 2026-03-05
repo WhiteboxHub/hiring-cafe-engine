@@ -93,19 +93,19 @@ Examples:
     if args.test:
         args.job_limit = args.job_limit or 10
         args.enrich_ats_limit = args.enrich_ats_limit or 10
-        logger.info("🧪 Test mode: 10 jobs only")
+        logger.info("Test mode: 10 jobs only")
 
     # Override headless setting if specified
     if args.headless:
         settings.HEADLESS = True
-        logger.info("👻 Running in HEADLESS mode")
+        logger.info("Running in HEADLESS mode")
     
     driver = None
     try:
         # Start browser
-        logger.info("🚀 Starting browser...")
+        logger.info("Starting browser...")
         driver = browser_service.start_browser()
-        logger.info("✅ Browser started successfully")
+        logger.info("Browser started successfully")
         
         # Create strategy instance
         strategy = HiringCafeStrategy(driver)
@@ -132,14 +132,14 @@ Examples:
             }
             with open(by_ats_path, "w", encoding="utf-8") as f:
                 json.dump(payload, f, indent=2, ensure_ascii=False)
-            logger.info("💾 Saved job posting URLs by ATS: %s", by_ats_path)
-            print(f"📂 Job posting URLs by ATS: {by_ats_path}")
+            logger.info("Saved job posting URLs by ATS: %s", by_ats_path)
+            print(f"Job posting URLs by ATS: {by_ats_path}")
 
         # Print summary
         print("\n" + "=" * 60)
-        print(f"✅ Scraping completed!")
-        print(f"📊 Total jobs found: {len(jobs)}")
-        print(f"💾 Saved to: {args.output}")
+        print(f"Scraping completed!")
+        print(f"Total jobs found: {len(jobs)}")
+        print(f"Saved to: {args.output}")
         print("=" * 60)
         
         # Optionally save job IDs only
@@ -147,11 +147,11 @@ Examples:
             ids = [j.get("job_id") or j.get("external_id") for j in jobs if j.get("job_id") or j.get("external_id")]
             with open(args.ids_only, "w", encoding="utf-8") as f:
                 f.write("\n".join(ids))
-            print(f"📄 Job IDs written to: {args.ids_only} ({len(ids)} IDs)")
+            print(f" Job IDs written to: {args.ids_only} ({len(ids)} IDs)")
         
         # Print first few jobs as preview
         if jobs:
-            print("\n📋 Sample jobs (first 5):")
+            print("\n Sample jobs (first 5):")
             for i, job in enumerate(jobs[:5], 1):
                 ats = job.get("ats") or {"url": job.get("ats_url"), "platform": job.get("ats_platform")}
                 print(f"\n{i}. {job.get('job_id', job.get('external_id', 'N/A'))} - {job.get('title', 'N/A')}")
@@ -161,19 +161,19 @@ Examples:
         return 0
         
     except KeyboardInterrupt:
-        logger.info("\n⚠️ Interrupted by user")
+        logger.info("\n Interrupted by user")
         return 1
     except Exception as e:
-        logger.critical(f"❌ Fatal error: {e}")
+        logger.critical(f"Fatal error: {e}")
         import traceback
         traceback.print_exc()
         return 1
     finally:
         # Clean up browser
         if driver:
-            logger.info("🧹 Closing browser...")
+            logger.info("Closing browser...")
             browser_service.stop_browser()
-            logger.info("✅ Browser closed")
+            logger.info("Browser closed")
 
 
 if __name__ == "__main__":
