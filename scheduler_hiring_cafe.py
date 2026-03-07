@@ -181,12 +181,32 @@ def main():
 
     logger.info("Hiring Cafe Scheduler Starting")
 
-    schedule = get_schedule_from_website()
+    schedule = None
+    api_reachable = True
+    try:
+        schedule = get_schedule_from_website()
+    except Exception as e:
+        logger.warning(f"Failed to connect to orchestrator API: {e}. Running pipeline in standalone mode.")
+        api_reachable = False
 
-    if not schedule:
-        logger.info("No schedule due. Exiting.")
+    if not api_reachable or not schedule:
+        if api_reachable: # schedule is None, but API was reachable, meaning no due schedule
+            logger.info("No schedule due. Exiting.")
+            return
+
+        # Fallback mode: API unreachable or no schedule found and API was unreachable
+        logger.warning("Running pipeline in standalone mode due to API unreachability or no due schedule.")
+        try:
+            logger.info("Running Hiring Cafe Pipeline (standalone)")
+            results = run_pipeline()
+            logger.info(f"Standalone pipeline finished. Results: {results}")
+        except Exception as e:
+            logger.error(f"Standalone pipeline failed: {e}")
+        finally:
+            logger.info("Scheduler Finished (standalone mode)")
         return
 
+    # Original logic continues if API is reachable and a schedule is found
     schedule_id = schedule.get("id")
     workflow_id = schedule.get("automation_workflow_id")
 
@@ -202,7 +222,6 @@ def main():
     log_id = create_log(workflow_id, schedule_id, run_id)
 
     try:
-
         logger.info("Running Hiring Cafe Pipeline")
 
         results = run_pipeline()
@@ -227,16 +246,13 @@ def main():
             )
 
     except Exception as e:
-
         logger.error(f"Pipeline failed: {e}")
 
         if log_id:
             update_log(log_id, "failed", error=e)
 
     finally:
-
         unlock_schedule(schedule_id, frequency, interval)
-
         logger.info("Scheduler Finished")
 
 
