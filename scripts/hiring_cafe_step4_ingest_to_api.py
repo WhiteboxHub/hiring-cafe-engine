@@ -222,13 +222,20 @@ def ingest_to_api(json_path):
                         logger.warning(f"⚠️ Could not extract workable details for {job_id} due to browser error: {e}")
                 
                 # Construct job listing object for API
+                # Lowercase all human-readable fields to match LinkedIn data format
+                _title = (parsed_info.get('title') or job.get('title', 'Unknown Title'))[:255]
+                _company = parsed_info.get('company_name') or "Unknown Company"
+                _location = parsed_info.get('location')
+                _city = job.get('city')
+                _state = job.get('state')
+                _country = job.get('country')
                 job_listing = {
-                    "title": parsed_info.get('title') or job.get('title', 'Unknown Title')[:255],
-                    "company_name": parsed_info.get('company_name') or "Unknown Company",
-                    "location": parsed_info.get('location'),
-                    "city": job.get('city'),
-                    "state": job.get('state'),
-                    "country": job.get('country'),
+                    "title": _title.lower() if _title else _title,
+                    "company_name": _company.lower() if _company else _company,
+                    "location": _location.lower() if _location else _location,
+                    "city": _city.lower() if _city else _city,
+                    "state": _state.lower() if _state else _state,
+                    "country": _country.lower() if _country else _country,
                     "position_type": parsed_info.get('position_type', 'full_time'),
                     "employment_mode": parsed_info.get('employment_mode', 'onsite'),
                     "source": "hiring.cafe",
