@@ -2,7 +2,7 @@
 :: =====================================================================
 :: run_scheduled.bat — Hiring Cafe Daily Pipeline Launcher
 :: Registered in Windows Task Scheduler as hiring_cafe_job_extractor
-:: Runs daily at 04:01 AM
+:: Runs daily at 07:30 AM
 :: =====================================================================
 cd /d "%~dp0"
 
