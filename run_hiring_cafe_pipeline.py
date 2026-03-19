@@ -161,6 +161,7 @@ USAGE
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -243,6 +244,48 @@ def _kill_chrome_profile_locks(root: Path) -> None:
                 print(f"   ⚠️  Could not remove lock file {lock.name}: {e}")
     if removed:
         print(f"   🔓 Removed Chrome lock files: {', '.join(removed)}")
+
+
+def _clear_chrome_profile_cache(root: Path) -> None:
+    """
+    Clear Chrome cache directories before each pipeline run.
+
+    WHY THIS HELPS
+    ──────────────
+    The Chrome profile accumulates bot-detection signals over repeated
+    automated runs — cached responses, service worker state, and network
+    logs that Cloudflare fingerprints. Clearing these directories resets
+    the fingerprint each time so hiring.cafe sees a "fresh" browser session.
+
+    We only clear cache/network dirs, NOT cookies or local storage, so
+    the browser still looks like it has some history (which is desirable).
+    """
+    chrome_profile = root / "chrome_profile"
+    if not chrome_profile.exists():
+        return
+
+    # Directories that contain cache/fingerprint data — safe to delete each run
+    dirs_to_clear = [
+        "Default/Cache",
+        "Default/Code Cache",
+        "Default/GPUCache",
+        "Default/Service Worker",
+        "Default/Network",
+    ]
+    cleared = []
+    for d in dirs_to_clear:
+        target = chrome_profile / d
+        if target.exists():
+            try:
+                shutil.rmtree(target)
+                cleared.append(d)
+            except Exception as e:
+                print(f"   ⚠️  Could not clear cache dir {d}: {e}")
+
+    if cleared:
+        print(f"   🧹 Cleared Chrome cache: {len(cleared)} dirs reset (bot fingerprint reset)")
+    else:
+        print(f"   ℹ️  Chrome cache dirs not found (first run or already clean)")
 
 
 def _run_step(label: str, script: Path, extra_args: list = []) -> bool:
@@ -362,13 +405,15 @@ def run_pipeline(args_list=None) -> dict:
     print(f"   Run ID  : {run_id}")
     print(f"   Root    : {ROOT}")
 
-    # ── PRE-FLIGHT: Kill stale Chrome + remove profile locks ─────────────────
-    # This prevents "Browser window not found" and InvalidSessionIdException
-    # errors caused by leftover Chrome processes from previous runs.
+    # ── PRE-FLIGHT: Kill stale Chrome + remove profile locks + clear cache ────
+    # Clearing the cache resets the bot-detection fingerprint that Cloudflare
+    # builds up from repeated automated Chrome sessions. This is the primary
+    # fix for intermittent 0-job runs caused by blocking.
     print(f"\n   🧹 Pre-flight: killing stale Chrome processes...")
     _kill_chrome()
     time.sleep(1)  # Give OS time to release file handles
     _kill_chrome_profile_locks(ROOT)
+    _clear_chrome_profile_cache(ROOT)   # ← NEW: resets bot fingerprint each run
     print(f"   ✅ Pre-flight complete")
 
     results = {}
@@ -381,13 +426,13 @@ def run_pipeline(args_list=None) -> dict:
     else:
         if not STEP1.exists():
             print(f"❌ Step 1 script not found: {STEP1}", file=sys.stderr)
-            return {"status": "error", "error": "Step 1 script not found"}
+            return {"status": "error", "error": "Step 1 script not found", "jobs_saved": 0, "jobs_found": 0, "timestamp": _now()}
         _banner("STEP 1 — Scraping job URLs from hiring.cafe", "-")
         ok = _run_step("Step 1: Scrape jobs", STEP1)
         results["step1"] = "ok" if ok else "failed"
         if not ok:
             _banner("❌ Pipeline stopped — Step 1 failed")
-            return {"status": "error", "error": "Step 1 failed"}
+            return {"status": "error", "error": "Step 1 failed", "jobs_saved": 0, "jobs_found": 0, "timestamp": _now()}
 
         print(f"\n   🧹 Clearing stale ATS fields from previous run...")
         cleared = _clear_ats_fields(JOBS_FILE)
@@ -398,7 +443,7 @@ def run_pipeline(args_list=None) -> dict:
             print(f"\n   ⚠️  Step 1 found 0 jobs — hiring.cafe may be blocking requests.")
             print(f"   ℹ️  Wait 30 minutes and try again, or check your internet connection.")
             _banner("❌ Pipeline stopped — 0 jobs scraped")
-            return {"status": "error", "error": "0 jobs scraped"}
+            return {"status": "error", "error": "0 jobs scraped", "jobs_saved": 0, "jobs_found": 0, "timestamp": _now()}
 
     # ── STEP 2 ────────────────────────────────────────────────────────────────
     if args.skip_step2:
@@ -407,7 +452,7 @@ def run_pipeline(args_list=None) -> dict:
     else:
         if not STEP2.exists():
             print(f"❌ Step 2 script not found: {STEP2}", file=sys.stderr)
-            return {"status": "error", "error": "Step 2 script not found"}
+            return {"status": "error", "error": "Step 2 script not found", "jobs_saved": 0, "jobs_found": 0, "timestamp": _now()}
 
         # Kill Chrome again between steps — fresh session for Step 2
         print(f"\n   🧹 Resetting Chrome before Step 2...")
@@ -434,7 +479,7 @@ def run_pipeline(args_list=None) -> dict:
     else:
         if not STEP3.exists():
             print(f"❌ Step 3 script not found: {STEP3}", file=sys.stderr)
-            return {"status": "error", "error": "Step 3 script not found"}
+            return {"status": "error", "error": "Step 3 script not found", "jobs_saved": 0, "jobs_found": 0, "timestamp": _now()}
         _banner("STEP 3 — Combining jobs by ATS platform", "-")
         step3_args = ["--input", str(JOBS_FILE), "--output", str(BY_ATS_FILE)]
         ok = _run_step("Step 3: Combine by ATS", STEP3, step3_args)
@@ -492,7 +537,7 @@ def run_pipeline(args_list=None) -> dict:
 
     if results.get("step1") == "failed" or results.get("step3") == "failed":
         return {"status": "failed", "jobs_saved": jobs_with_ats, "jobs_found": jobs_count, "timestamp": _now()}
-    
+
     return {"status": "success", "jobs_saved": jobs_with_ats, "jobs_found": jobs_count, "timestamp": _now()}
 
 
