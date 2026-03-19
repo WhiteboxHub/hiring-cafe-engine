@@ -27,7 +27,7 @@ if exist "%~dp0.venv\Scripts\python.exe" (
     "%~dp0venv\Scripts\python.exe" scheduler_hiring_cafe.py >> "%LOGFILE%" 2>&1
 ) else (
     echo [%date% %time%] Using hiring_cafe_job_extractor venv (fallback) >> "%LOGFILE%"
-    call "..\hiring-cafe-engine\venv\Scripts\activate.bat"
+    call "%~dp0venv\Scripts\activate.bat"
     python scheduler_hiring_cafe.py >> "%LOGFILE%" 2>&1
 )
 

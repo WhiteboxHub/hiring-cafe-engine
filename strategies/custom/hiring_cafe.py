@@ -200,12 +200,16 @@ def _parse_date_fetched_past_n_days(value) -> int:
 
 
 def _normalize_search_keyword(keyword: str) -> str:
+    """
+    Normalize a search keyword for Hiring Cafe's jobTitleQuery param.
+
+    Hiring Cafe's state-based URL handles spaces naturally via encoding.
+    Literal '+' symbols in the keyword can lead to double-encoding or
+    displaying literally in the search filters, so we preserve spaces.
+    """
     if not keyword:
         return keyword
-    s = keyword.strip()
-    if " " in s and "+" not in s:
-        s = s.replace(" ", "+")
-    return s
+    return keyword.strip()
 
 
 def _build_search_url(
@@ -213,9 +217,12 @@ def _build_search_url(
     base_url: str = "https://hiring.cafe",
     date_fetched_past_n_days: int = 2,
 ) -> str:
-    search_query = _normalize_search_keyword(keyword)
+    # Use jobTitleQuery (not searchQuery) so the keyword is applied to
+    # the "Job Title Terms" filter — exactly what the UI does when you
+    # type a boolean query like "AI AND ENGINEER" and click Apply.
+    job_title_query = _normalize_search_keyword(keyword)
     search_state = json.dumps({
-        "searchQuery": search_query,
+        "jobTitleQuery": job_title_query,
         "dateFetchedPastNDays": date_fetched_past_n_days,
     })
     encoded = quote(search_state, safe="")
@@ -475,17 +482,96 @@ class HiringCafeStrategy(BaseStrategy):
         except Exception:
             return False
 
+    # def _parse_hiring_cafe_card_text(self, text: str) -> dict:
+    #     """
+    #     Parse the raw text from a Hiring Cafe job card into granular fields.
+    #     Standard format observed:
+    #     Line 0: Time elapsed (e.g., "15h" or "2d")
+    #     Line 1: Job Title
+    #     Line 2: Location (City, State, Country)
+    #     Line 3: Type (Onsite/Remote/Hybrid)
+    #     Line 4: Job Type (Full Time/Contract)
+    #     Line 5: Company Name
+    #     Line 6+: Optional Stock info (NYSE: ACN) and Description snippet
+    #     """
+    #     lines = [line.strip() for line in text.split('\n') if line.strip()]
+    #     data = {
+    #         "job_tittle": None,
+    #         "location": None,
+    #         "city": None,
+    #         "state": None,
+    #         "country": None,
+    #         "type": None,
+    #         "comapany": None,
+    #         "company_description": None
+    #     }
+        
+    #     if not lines:
+    #         return data
+            
+    #     # Line 0 is usually time elapsed, skip if it matches pattern like "15h" or "2d"
+    #     start_idx = 0
+    #     if re.match(r'^\d+[hdmw]$', lines[0]):
+    #         start_idx = 1
+            
+    #     if len(lines) > start_idx:
+    #         data["job_tittle"] = lines[start_idx]
+            
+    #     if len(lines) > start_idx + 1:
+    #         loc_str = lines[start_idx + 1]
+    #         data["location"] = loc_str
+    #         # Parse Location: "Hyderabad, Telangana, India"
+    #         parts = [p.strip() for p in loc_str.split(',')]
+    #         if len(parts) >= 3:
+    #             data["city"] = parts[0]
+    #             data["state"] = parts[1]
+    #             data["country"] = parts[2]
+    #         elif len(parts) == 2:
+    #             data["city"] = parts[0]
+    #             data["country"] = parts[1]
+    #         elif len(parts) == 1:
+    #             data["city"] = parts[0]
+
+    #     if len(lines) > start_idx + 2:
+    #         data["type"] = lines[start_idx + 2]
+            
+    #     # Skip "Full Time" / "Contract" line (usually start_idx + 3)
+        
+    #     if len(lines) > start_idx + 4:
+    #         data["comapany"] = lines[start_idx + 4]
+            
+    #     # Description snippet usually starts after company or stock info
+    #     # It often starts with a colon ": Provides..."
+    #     desc_lines = []
+    #     for line in lines[start_idx + 5:]:
+    #         if line.startswith(':'):
+    #             desc_lines.append(line.lstrip(':').strip())
+    #         elif not any(x in line for x in ['NYSE:', 'NASDAQ:', 'YOE']):
+    #             desc_lines.append(line)
+        
+    #     if desc_lines:
+    #         data["company_description"] = " ".join(desc_lines)
+            
+    #     return data
+
     def _parse_hiring_cafe_card_text(self, text: str) -> dict:
         """
         Parse the raw text from a Hiring Cafe job card into granular fields.
-        Standard format observed:
-        Line 0: Time elapsed (e.g., "15h" or "2d")
-        Line 1: Job Title
-        Line 2: Location (City, State, Country)
-        Line 3: Type (Onsite/Remote/Hybrid)
-        Line 4: Job Type (Full Time/Contract)
-        Line 5: Company Name
-        Line 6+: Optional Stock info (NYSE: ACN) and Description snippet
+
+        Hiring Cafe cards do NOT have a guaranteed fixed line order.
+        A salary line, stock ticker, or multi-city label can appear anywhere
+        and shift subsequent lines down — making fixed-index parsing unreliable.
+
+        This version classifies each line by its *content*:
+          • Time token  → r^\d+[hdmw]$  → skip
+          • Work mode   → "Onsite/Remote/Hybrid" (exact) → data["type"]
+          • Job type    → "Full Time/Contract/…" (exact) → skip (not company!)
+          • Salary      → $100k-$200k pattern → skip
+          • Stock ticker/ YOE → skip
+          • Location    → has comma OR known geo keyword → data["location"]
+          • Title       → first surviving line → data["job_tittle"]
+          • Company     → line with ":" whose left side passes junk checks
+          • Description → colon-right-side or remaining lines
         """
         lines = [line.strip() for line in text.split('\n') if line.strip()]
         data = {
@@ -496,55 +582,125 @@ class HiringCafeStrategy(BaseStrategy):
             "country": None,
             "type": None,
             "comapany": None,
-            "company_description": None
+            "company_description": None,
         }
-        
         if not lines:
             return data
-            
-        # Line 0 is usually time elapsed, skip if it matches pattern like "15h" or "2d"
-        start_idx = 0
-        if re.match(r'^\d+[hdmw]$', lines[0]):
-            start_idx = 1
-            
-        if len(lines) > start_idx:
-            data["job_tittle"] = lines[start_idx]
-            
-        if len(lines) > start_idx + 1:
-            loc_str = lines[start_idx + 1]
-            data["location"] = loc_str
-            # Parse Location: "Hyderabad, Telangana, India"
-            parts = [p.strip() for p in loc_str.split(',')]
-            if len(parts) >= 3:
-                data["city"] = parts[0]
-                data["state"] = parts[1]
-                data["country"] = parts[2]
-            elif len(parts) == 2:
-                data["city"] = parts[0]
-                data["country"] = parts[1]
-            elif len(parts) == 1:
-                data["city"] = parts[0]
 
-        if len(lines) > start_idx + 2:
-            data["type"] = lines[start_idx + 2]
-            
-        # Skip "Full Time" / "Contract" line (usually start_idx + 3)
-        
-        if len(lines) > start_idx + 4:
-            data["comapany"] = lines[start_idx + 4]
-            
-        # Description snippet usually starts after company or stock info
-        # It often starts with a colon ": Provides..."
+        # ── classifiers ───────────────────────────────────────────────────────
+        _time_re   = re.compile(r'^\d+[hdmw]$|^\d+ months? ago$', re.I)
+        _salary_re = re.compile(
+            r'\$\d+[kK]?[-\u2013]\$?\d+[kK]?|\$\d+[kK]?/\w+|\d+[kK]/(?:yr|mo|year|hr)',
+            re.I,
+        )
+        _mode_map  = {'onsite': 'Onsite', 'remote': 'Remote', 'hybrid': 'Hybrid'}
+        _type_set  = {
+            'full time', 'full-time', 'contract', 'internship',
+            'part time', 'temporary', 'part-time',
+        }
+        _loc_signals = {
+            'united states', 'usa', 'india', 'germany', 'france', 'spain',
+            'italy', 'egypt', 'canada', 'uk', 'united kingdom', 'remote',
+            'santa clara', 'mountain view', 'san francisco', 'new york',
+            'sunnyvale', 'austin', 'seattle', 'charlotte', 'mclean', 'boston',
+            'raleigh', 'dublin', 'kansas city', 'indianapolis', 'dallas',
+            'denver', 'chicago', 'atlanta', 'milpitas', 'bellevue',
+            'palo alto', 'chevy chase', 'linthicum heights', 'annapolis junction',
+            'conshohocken', 'ridgefield park', 'schiller park', 'boerne',
+            'newberg', 'fairborn', 'mountlake terrace',
+        }
+        _junk_starts = ('NYSE:', 'NASDAQ:', 'Euronext', 'YOE:')
+
+        def _is_salary(s):
+            return bool(_salary_re.search(s))
+
+        def _is_location(s):
+            sl = s.lower()
+            return ',' in s or any(sig in sl for sig in _loc_signals)
+
+        def _is_multi_city(s):
+            parts = re.split(r'\s+or\s+', s.strip(), flags=re.I)
+            return len(parts) >= 2 and all(':' not in p and len(p.split()) <= 5 for p in parts)
+
+        def _is_junk(s):
+            ll = s.strip().lower()
+            return (
+                bool(_time_re.match(s))
+                or bool(_salary_re.search(s))
+                or ll in _mode_map
+                or ll in _type_set
+                or any(s.startswith(p) for p in _junk_starts)
+                or s.startswith(':')
+            )
+
+        # ── single-pass classification ────────────────────────────────────────
+        title_set  = False
         desc_lines = []
-        for line in lines[start_idx + 5:]:
+
+        for line in lines:
+            ll = line.strip().lower()
+
+            if _time_re.match(line):
+                continue                          # skip time token
+
+            if ll in _mode_map:
+                data['type'] = _mode_map[ll]      # work mode
+                continue
+
+            if ll in _type_set:
+                continue                          # "Full Time" etc — NOT a company
+
+            if _is_salary(line):
+                continue                          # skip salary
+
+            if any(line.startswith(p) for p in _junk_starts):
+                continue                          # skip ticker / YOE
+
             if line.startswith(':'):
-                desc_lines.append(line.lstrip(':').strip())
-            elif not any(x in line for x in ['NYSE:', 'NASDAQ:', 'YOE']):
+                if not data['company_description']:
+                    data['company_description'] = line.lstrip(':').strip()
+                continue
+
+            # Location
+            if not data['location'] and _is_location(line) and not _is_multi_city(line):
+                data['location'] = line
+                parts = [p.strip() for p in line.split(',')]
+                if len(parts) >= 3:
+                    data['city'], data['state'], data['country'] = parts[0], parts[1], parts[2]
+                elif len(parts) == 2:
+                    data['city'], data['country'] = parts[0], parts[1]
+                else:
+                    data['city'] = parts[0]
+                continue
+
+            # Title — first surviving line
+            if not title_set:
+                data['job_tittle'] = line
+                title_set = True
+                continue
+
+            # Company — line with ":" whose left side passes checks
+            if ':' in line and not data['comapany']:
+                name = line.split(':', 1)[0].strip().rstrip('.,;-')
+                if name and not _is_salary(name) and not _is_multi_city(name):
+                    data['comapany'] = name
+                    right = line.split(':', 1)[1].strip()
+                    if right and not data['company_description']:
+                        data['company_description'] = right
+                continue
+
+            # Candidate company (no colon) — first line that isn't junk
+            if not data['comapany'] and not _is_junk(line) and not _is_multi_city(line):
+                data['comapany'] = line
+                continue
+
+            # Everything else → description
+            if line and not _is_junk(line):
                 desc_lines.append(line)
-        
-        if desc_lines:
-            data["company_description"] = " ".join(desc_lines)
-            
+
+        if not data['company_description'] and desc_lines:
+            data['company_description'] = ' '.join(desc_lines)
+
         return data
 
     def _scroll_until_end(self, max_scrolls=100, scroll_delay=2):
@@ -1344,6 +1500,74 @@ class HiringCafeStrategy(BaseStrategy):
 
         return []
 
+    @staticmethod
+    def _matches_keyword_filter(job: dict, keyword: str) -> bool:
+        """
+        Client-side boolean title filter with word-boundary matching.
+
+        Parses AND / NOT logic from the search keyword and tests it against
+        the job's scraped title fields.  Uses regex \\b word boundaries so that
+        short acronyms like 'AI' or 'ML' are matched as whole words only:
+          ✅ "AI Engineer"              → 'ai' word found
+          ❌ "email"                    → 'ai' is inside a word, rejected
+          ❌ "html"                     → 'ml' is inside a word, rejected
+          ✅ "AI/ML Engineer"           → slash-separated acronym handled
+
+        Supported query syntax (case-insensitive):
+          "AI AND ENGINEER"          → title must contain word 'AI' AND 'engineer'
+          "ML AND ENGINEER NOT AI"   → title must contain 'ML' AND 'engineer',
+                                        and must NOT contain word 'AI'
+
+        Matching is done on: job_tittle (primary), then title (fallback).
+        """
+        # Build the text to search against (lowercase)
+        title_text = (job.get("job_tittle") or job.get("title") or "").lower()
+        if not title_text:
+            return True  # can't filter — let it through
+
+        def _word_present(term: str, text: str) -> bool:
+            """
+            Return True if `term` appears as a whole word in `text`.
+            Treats / and - as word separators so 'ai' matches in 'ai/ml engineer'.
+            """
+            t = re.escape(term.lower())
+            # Treat /, -, and space as word boundaries in addition to \\b
+            pattern = r'(?<![a-z0-9])' + t + r'(?![a-z0-9])'
+            return bool(re.search(pattern, text, re.IGNORECASE))
+
+        # Parse NOT clause first: everything after the first " NOT " token
+        kw_upper = keyword.upper()
+        not_terms: list[str] = []
+        and_part = keyword
+        if " NOT " in kw_upper:
+            not_idx = kw_upper.index(" NOT ")
+            not_clause = keyword[not_idx + 5:].strip()
+            and_part   = keyword[:not_idx].strip()
+            not_terms = [
+                t.strip()
+                for t in re.split(r'\b(?:AND|\+)\b', not_clause, flags=re.IGNORECASE)
+                if t.strip()
+            ]
+
+        # Parse AND / + terms
+        and_terms = [
+            t.strip()
+            for t in re.split(r'\b(?:AND|\+)\b', and_part, flags=re.IGNORECASE)
+            if t.strip()
+        ]
+
+        # All AND terms must appear as whole words in the title
+        for term in and_terms:
+            if not _word_present(term, title_text):
+                return False
+
+        # No NOT term may appear as a whole word in the title
+        for term in not_terms:
+            if _word_present(term, title_text):
+                return False
+
+        return True
+
     def _merge_jobs_unique(self, keyword_job_lists: list[tuple[str, list[dict]]]) -> list[dict]:
         by_id = {}
         for keyword, lst in keyword_job_lists:
@@ -1376,16 +1600,71 @@ class HiringCafeStrategy(BaseStrategy):
                 seen_ids.add(jid)
         return order
 
+        title_text = (
+            (job.get("job_tittle") or job.get("title") or "").lower()
+        )
+        if not title_text:
+            return True  # can't filter — let it through
+
+        # Parse NOT clause first: everything after the first "NOT" token
+        kw_upper = keyword.upper()
+        not_terms: list[str] = []
+        and_part = keyword
+        if " NOT " in kw_upper:
+            not_idx = kw_upper.index(" NOT ")
+            not_clause = keyword[not_idx + 5:].strip()
+            and_part   = keyword[:not_idx].strip()
+            # NOT clause may itself contain multiple words joined by AND/spaces
+            not_terms = [
+                t.strip().lower()
+                for t in re.split(r'\b(?:AND|\+)\b', not_clause, flags=re.IGNORECASE)
+                if t.strip()
+            ]
+
+        # Parse AND / + terms
+        and_terms = [
+            t.strip().lower()
+            for t in re.split(r'\b(?:AND|\+)\b', and_part, flags=re.IGNORECASE)
+            if t.strip()
+        ]
+
+        # All AND terms must appear in the title
+        for term in and_terms:
+            if term not in title_text:
+                return False
+
+        # No NOT term may appear in the title
+        for term in not_terms:
+            if term in title_text:
+                return False
+
+        return True
+
     def find_jobs(self) -> list[dict]:
         if len(self._search_keywords) == 1:
             kw = self._search_keywords[0]
             jobs = self.find_jobs_for_keyword(kw)
             for j in jobs:
                 j["source_keywords"] = [kw]
+            before = len(jobs)
+            jobs = [j for j in jobs if self._matches_keyword_filter(j, kw)]
+            dropped = before - len(jobs)
+            if dropped:
+                logger.info("🔍 Title filter dropped %d irrelevant jobs for keyword %r", dropped, kw)
             return jobs
+
         keyword_job_lists = []
         for i, keyword in enumerate(self._search_keywords):
             jobs = self.find_jobs_for_keyword(keyword)
+            # Apply client-side boolean title filter per keyword
+            before = len(jobs)
+            jobs = [j for j in jobs if self._matches_keyword_filter(j, keyword)]
+            dropped = before - len(jobs)
+            if dropped:
+                logger.info(
+                    "🔍 Title filter dropped %d irrelevant jobs for keyword %r (%d kept)",
+                    dropped, keyword, len(jobs)
+                )
             keyword_job_lists.append((keyword, jobs))
             # Longer human-like delay between keywords to avoid rate limiting.
             # hiring.cafe blocks rapid successive searches (seen in logs: 0 jobs after first keyword).
