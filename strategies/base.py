@@ -1,15 +1,15 @@
 from abc import ABC, abstractmethod
 from core.safe_actions import SafeActions
 from core.logger import logger
-from models.config_models import JobListing
+
 
 class BaseStrategy(ABC):
-    def __init__(self, driver, job_site, selectors):
+    def __init__(self, driver, job_site=None, selectors=None):
         self.driver = driver
         self.job_site = job_site
-        self.selectors = selectors # JSON config from DB
+        self.selectors = selectors  # JSON config from DB
         self.actions = SafeActions(driver)
-        
+
     @abstractmethod
     def login(self):
         """
@@ -26,7 +26,7 @@ class BaseStrategy(ABC):
         pass
 
     @abstractmethod
-    def apply(self, listing: JobListing):
+    def apply(self, listing: dict):
         """
         Navigates to listing.job_url and attempts to apply.
         Returns True if successful, False otherwise.

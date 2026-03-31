@@ -1,119 +1,142 @@
-# Hiring Cafe Engine 🚀
+# hiring-cafe-engine
 
-An automated job scraping and ingestion pipeline that extracts job listings from [hiring.cafe](https://hiring.cafe), enriches them with ATS (Applicant Tracking System) URLs, and ingests clean data into your backend API — running daily on a schedule.
+> Automated job scraping, ATS enrichment, and API ingestion pipeline for [hiring.cafe](https://hiring.cafe) — runs daily on a schedule with built-in bot-detection evasion.
 
 ---
 
-## 📁 Project Structure
+## Overview
+
+`hiring-cafe-engine` is a 4-step Python pipeline that:
+
+1. **Scrapes** job listings from hiring.cafe by keyword and date filter
+2. **Enriches** each listing with its direct ATS (Applicant Tracking System) apply URL
+3. **Groups** enriched jobs by ATS platform
+4. **Ingests** clean, normalized job data into your backend API
+
+The pipeline is triggered daily by **Windows Task Scheduler** and integrates with an orchestrator API for schedule locking, run logging, and next-run management.
+
+---
+
+## Project Structure
 
 ```
 hiring-cafe-engine/
-├── config/
-│   ├── settings.py                  # App settings loaded from .env
-│   ├── data_loader.py               # JSON config loader
-│   ├── secrets_validator.py         # Credential validation
-│   └── hiring_cafe.json             # Search keywords and date filter
-├── core/
-│   ├── auth_service.py              # API authentication (token management)
-│   ├── browser.py                   # Chrome browser service (undetected-chromedriver)
-│   ├── captcha_handler.py           # CAPTCHA handling utilities
-│   ├── human_behavior.py            # Human-like browser behavior simulation
-│   ├── logger.py                    # Logging setup
-│   ├── proxy_manager.py             # Proxy configuration
-│   └── safe_actions.py              # Safe Selenium click/type actions
-├── data/
-│   ├── db_connection.py             # DuckDB connection manager
-│   └── guest_form_data.json         # Applicant form data
-├── db/
-│   └── schema.sql                   # Database schema (run once to initialize)
-├── engine/
-│   ├── factory.py                   # Strategy factory (dynamic loader)
-│   ├── guards.py                    # Safety limits (rate limiting, dry run)
-│   └── runner.py                    # Main engine orchestrator
-├── models/
-│   ├── config_models.py             # SQLAlchemy ORM models (config tables)
-│   ├── history_models.py            # SQLAlchemy ORM models (history tables)
-│   └── __init__.py
+│
+├── hiring_cafe_scheduler.py             # Scheduler entry point (orchestrator-aware)
+├── hiring_cafe_scheduler_launcher.bat   # Windows Task Scheduler BAT launcher
+├── run_hiring_cafe_pipeline.py          # Full pipeline runner (Steps 1 → 4)
+│
 ├── scripts/
-│   ├── hiring_cafe_step1_extract_urls.py       # Step 1: Scrape job URLs
-│   ├── hiring_cafe_step2_extract_ats_urls.py   # Step 2: Extract ATS URLs
-│   ├── hiring_cafe_step3_combine_by_ats.py     # Step 3: Group jobs by ATS
-│   ├── hiring_cafe_step4_ingest_to_api.py      # Step 4: Ingest to backend API
+│   ├── hiring_cafe_step1_extract_urls.py       # Scrape job URLs from hiring.cafe
+│   ├── hiring_cafe_step2_extract_ats_urls.py   # Extract ATS apply URLs (checkpoint-safe)
+│   ├── hiring_cafe_step3_combine_by_ats.py     # Group jobs by ATS platform
+│   ├── hiring_cafe_step4_ingest_to_api.py      # Normalize & send to backend API
 │   ├── categorize_hiring_cafe_by_ats.py        # Utility: categorize by ATS
 │   ├── scrape_hiring_cafe.py                   # Standalone scraper
-│   ├── init_db.py                              # Initialize database
+│   ├── init_db.py                              # Initialize DuckDB database
 │   ├── check_db.py                             # Inspect database content
 │   ├── query_db.py                             # Run SQL queries on DB
 │   ├── main.py                                 # Engine entry point
-│   └── test_api_payload.py                     # Dry run API payload preview
+│   └── test_api_payload.py                     # Preview API payload (dry run)
+│
+├── core/
+│   ├── browser.py          # Chrome automation (undetected-chromedriver + anti-detection)
+│   ├── auth_service.py     # JWT authentication & BaseAPIClient
+│   ├── human_behavior.py   # Human-like delay simulation
+│   ├── safe_actions.py     # Resilient Selenium action wrappers
+│   ├── captcha_handler.py  # CAPTCHA detection utilities
+│   ├── proxy_manager.py    # Optional proxy support
+│   └── logger.py           # Logging configuration
+│
 ├── strategies/
 │   └── custom/
-│       └── hiring_cafe.py           # Hiring Cafe scraping strategy
-├── run_hiring_cafe_pipeline.py      # Full pipeline runner (Steps 1→2→3→4)
-├── scheduler.py                     # Daily scheduler
-├── requirements.txt                 # Python dependencies
-├── .env                             # Environment variables (not in git)
-└── .gitignore
+│       └── hiring_cafe.py  # HiringCafeStrategy: scroll, scrape, enrich
+│
+├── config/
+│   ├── settings.py         # Pydantic settings (reads from .env)
+│   ├── hiring_cafe.json    # Search keywords & date filter
+│   ├── data_loader.py      # JSON config loader
+│   └── secrets_validator.py
+│
+├── data/
+│   └── job_engine.duckdb   # Local DuckDB database
+│
+├── docs/
+│   └── HIRING_CAFE_THREE_STEPS.md   # Step-by-step usage guide
+│
+├── logs/                   # Runtime logs (auto-created)
+├── chrome_profile/         # Persistent Chrome user profile
+├── hiring_cafe_jobs.json   # Step 1 & 2 output (runtime)
+├── hiring_cafe_by_ats.json # Step 3 output / Step 4 input (runtime)
+├── requirements.txt
+└── .env                    # Environment config (not committed)
 ```
 
 ---
 
-## ⚙️ Setup
+## Setup
 
-### 1. Clone the repo
+### 1. Clone the repository
+
 ```bash
 git clone https://github.com/your-username/hiring-cafe-engine.git
 cd hiring-cafe-engine
 ```
 
-### 2. Create virtual environment
+### 2. Create and activate a virtual environment
+
 ```bash
 python -m venv venv
-venv\Scripts\activate        # Windows
-source venv/bin/activate     # Mac/Linux
+
+# Windows
+venv\Scripts\activate
+
+# macOS / Linux
+source venv/bin/activate
 ```
 
 ### 3. Install dependencies
+
 ```bash
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
-### 4. Create `.env` file
-```dotenv
-# Database
-DUCKDB_PATH=data/job_engine.duckdb
+### 4. Configure environment variables
 
-# Browser
+Create a `.env` file in the project root:
+
+```dotenv
+# ── Browser ───────────────────────────────────────────────
 CHROME_USER_DATA_DIR=./chrome_profile
 HEADLESS=false
 
-# Proxy (optional)
+# ── Database ─────────────────────────────────────────────
+DUCKDB_PATH=data/job_engine.duckdb
+
+# ── Proxy (optional) ─────────────────────────────────────
 PROXY_URL=
 
-# Safety
-MAX_APPLICATIONS_PER_RUN=10
-SUBMISSION_COOLDOWN_SECONDS=30
-DRY_RUN=false
-
-# Scheduler time (24h format)
-SCHEDULER_TIME=09:00
-
-# Backend API authentication
+# ── Backend API ───────────────────────────────────────────
 AUTH_URL=https://your-api.com/api/login
 AUTH_USERNAME=your_email@example.com
 AUTH_PASSWORD=your_password
+
+# ── Optional overrides ────────────────────────────────────
+# API_BASE_URL=https://your-api.com/api
+# API_TOKEN=your_static_bearer_token
 ```
 
 ### 5. Initialize the database
+
 ```bash
 python scripts/init_db.py
 ```
 
 ---
 
-## 🔍 Search Configuration
+## Configuration
 
-Edit `config/hiring_cafe.json` to set keywords and date filter:
+Edit `config/hiring_cafe.json` to control what jobs are scraped:
 
 ```json
 {
@@ -122,155 +145,162 @@ Edit `config/hiring_cafe.json` to set keywords and date filter:
 }
 ```
 
-| Value | Meaning |
-|-------|---------|
-| `2`   | Last 24 hours |
-| `4`   | Last 3 days |
-| `14`  | Last 1 week |
-| `21`  | Last 2 weeks |
-| `-1`  | All time |
+| `date_fetched_past_n_days` | Filters jobs posted in the last… |
+|---|---|
+| `2` | 24 hours |
+| `4` | 3 days |
+| `14` | 1 week |
+| `21` | 2 weeks |
+| `-1` | All time |
 
 ---
 
-## 🚀 Running the Pipeline
+## Running the Pipeline
 
-### Full pipeline (all 4 steps)
+### Full pipeline (Steps 1 → 4)
+
 ```bash
 python run_hiring_cafe_pipeline.py
 ```
 
-### Skip step 1 (resume after interruption)
+### Resume after interruption (skip Step 1)
+
 ```bash
 python run_hiring_cafe_pipeline.py --skip-step1
 ```
 
-### Test with limited jobs
+### Test with a limited number of jobs
+
 ```bash
 python run_hiring_cafe_pipeline.py --limit 20
 ```
 
 ### Run individual steps
+
 ```bash
-# Step 1: Scrape job URLs
+# Step 1 — Scrape job URLs
 python scripts/hiring_cafe_step1_extract_urls.py
 
-# Step 2: Extract ATS URLs (resumes from checkpoint if interrupted)
+# Step 2 — Extract ATS URLs (checkpoint/resume safe)
 python scripts/hiring_cafe_step2_extract_ats_urls.py
 
-# Step 3: Combine by ATS platform
+# Step 3 — Group by ATS platform
 python scripts/hiring_cafe_step3_combine_by_ats.py
 
-# Step 4: Ingest to backend API
+# Step 4 — Ingest to backend API
 python scripts/hiring_cafe_step4_ingest_to_api.py --input hiring_cafe_by_ats.json
 ```
 
 ---
 
-## 📋 Pipeline Steps Explained
+## Pipeline Steps
 
 | Step | Script | Description |
 |------|--------|-------------|
-| 1 | `hiring_cafe_step1_extract_urls.py` | Opens hiring.cafe, searches by keyword, scrolls to load all jobs, saves job IDs and URLs |
-| 2 | `hiring_cafe_step2_extract_ats_urls.py` | Opens each job page, extracts the ATS apply URL (Workday, Greenhouse, etc.). Saves after every job — safe to interrupt and resume |
-| 3 | `hiring_cafe_step3_combine_by_ats.py` | Groups jobs by ATS platform into `hiring_cafe_by_ats.json`. No browser needed |
-| 4 | `hiring_cafe_step4_ingest_to_api.py` | Cleans and normalizes data, sends to backend API in batches of 50 |
+| **1** | `hiring_cafe_step1_extract_urls.py` | Opens hiring.cafe, searches by keyword, scrolls to load all results, saves job IDs and URLs |
+| **2** | `hiring_cafe_step2_extract_ats_urls.py` | Visits each job page and extracts the direct ATS apply URL. Saves after **every job** — safe to interrupt and resume |
+| **3** | `hiring_cafe_step3_combine_by_ats.py` | Groups jobs into `hiring_cafe_by_ats.json` by platform. No browser required |
+| **4** | `hiring_cafe_step4_ingest_to_api.py` | Resolves company names, sanitizes geo fields, sends to backend in **batches of 50** |
+
+### Automatic pre-flight (before every run)
+
+Before Step 1 launches, the pipeline automatically:
+- Kills any stale `chrome.exe` / `chromedriver.exe` processes
+- Removes Chrome profile lock files (`SingletonLock`, `Default/LOCK`, etc.)
+- Clears Chrome cache directories — resets the Cloudflare bot fingerprint each run
 
 ---
 
-## ⏰ Scheduler
+## Scheduling
 
-### Start the daily scheduler
-```bash
-python scheduler.py
+The engine is designed to run unattended via **Windows Task Scheduler**.
+
+### How it works
+
+```
+Windows Task Scheduler
+  └─► hiring_cafe_scheduler_launcher.bat   (sets env vars, captures logs)
+        └─► hiring_cafe_scheduler.py
+              ├─► GET  /orchestrator/schedules/due   (check if workflow #9 is due)
+              ├─► POST /orchestrator/schedules/{id}/lock   (prevent double-runs)
+              ├─► run_pipeline()
+              ├─► PUT  /orchestrator/schedules/{id}   (set next_run_at via cron)
+              └─► PUT  /orchestrator/logs/{id}        (record result)
+              
+              ↓ Fallback (if API unreachable)
+              └─► run_pipeline() in standalone mode
 ```
 
-Set the run time in `.env`:
-```
-SCHEDULER_TIME=09:00
-```
+> **Standalone mode:** If the orchestrator API cannot be reached, the pipeline still runs — no data is lost.
 
-The scheduler runs the full pipeline automatically every day at the set time. Keep the terminal window open, or use Windows Task Scheduler for fully automated background runs.
+### Register in Task Scheduler
 
-### Windows Task Scheduler Setup
-1. Open Task Scheduler → **Create Task**
-2. **General tab**: Check "Run whether user is logged on or not" + "Run with highest privileges"
-3. **Triggers tab**: Daily at your preferred time
-4. **Actions tab**:
-   - Program: `C:\path\to\venv\Scripts\python.exe`
-   - Arguments: `run_hiring_cafe_pipeline.py`
-   - Start in: `C:\path\to\hiring-cafe-engine`
-5. **Conditions tab**: Uncheck "Start only if on AC power"
-6. **Settings tab**: Check "Run task as soon as possible after a scheduled start is missed"
+| Setting | Value |
+|---|---|
+| **Program** | `C:\Users\remot\Desktop\job_engine\hiring-cafe-engine\hiring_cafe_scheduler_launcher.bat` |
+| **Start in** | `C:\Users\remot\Desktop\job_engine\hiring-cafe-engine` |
+| **Trigger** | Daily at your preferred time |
+| **General** | ✅ Run whether user is logged on or not |
+| **Conditions** | ❌ Uncheck "Start only if on AC power" |
+| **Settings** | ✅ Run task as soon as possible after a scheduled start is missed |
+
+> **Why the BAT launcher?**  
+> It sets `SCHEDULER_LAUNCHED=1`, which tells `browser.py` to apply additional Chrome anti-detection flags required when running under Task Scheduler (no interactive TTY).
+
+### Log files
+
+| File | Contents |
+|------|---------|
+| `logs/scheduler_bat_rolling.log` | Latest BAT launcher run output |
+| `logs/scheduler_bat.log` | Full rolling BAT log history |
+| `logs/pipeline_runs.log` | Structured JSON record of every pipeline run |
 
 ---
 
-## 🗄️ Database
+## Supported ATS Platforms
 
-The project uses **DuckDB** (`data/job_engine.duckdb`).
+Workday · Greenhouse · Lever · Ashby · SmartRecruiters · iCIMS · Jobvite · Rippling · Taleo · BambooHR · Recruitee · Teamtailor · Workable · Oracle · SAP SuccessFactors · Paylocity · Breezy · JazzHR · BrassRing · ADP · and more
 
-### Inspect database
+---
+
+## Database Utilities
+
 ```bash
+# Inspect database tables and row counts
 python scripts/check_db.py
-```
 
-### Run SQL queries
-```bash
+# Run custom SQL queries
 python scripts/query_db.py
 ```
 
-### Common queries
-```sql
--- All job listings
-SELECT * FROM job_listings LIMIT 10;
-
--- Application history
-SELECT * FROM applications ORDER BY applied_at DESC LIMIT 10;
-
--- Status breakdown
-SELECT status, COUNT(*) FROM job_listings GROUP BY status;
-```
-
 ---
 
-## 📦 Output Files
+## Troubleshooting
 
-| File | Description |
-|------|-------------|
-| `hiring_cafe_jobs.json` | Raw scraped jobs with ATS URLs (Step 1 & 2 output) |
-| `hiring_cafe_by_ats.json` | Jobs grouped by ATS platform (Step 3 output) |
-| `logs/pipeline_runs.log` | Pipeline run history |
-| `logs/scheduler.log` | Scheduler activity log |
+**0 jobs scraped / blank page on Step 1**
+- hiring.cafe may be rate-limiting your IP or session
+- Wait 30–60 minutes and retry; the pre-flight cache clear helps reset fingerprinting
+- Try running with `--headless` removed so Chrome appears as an interactive browser
 
----
-
-## 🔧 Supported ATS Platforms
-
-Workday · Greenhouse · Lever · SmartRecruiters · iCIMS · Taleo · Ashby · Workable · BambooHR · Oracle Cloud · SAP SuccessFactors · Jobvite · Recruitee · Teamtailor · Personio · Rippling · Paylocity · Breezy · Jazz HR · BrassRing · ADP · and more
-
----
-
-## 🛠️ Troubleshooting
-
-**Browser opens blank page / 0 jobs scraped**
-- hiring.cafe may be rate limiting your IP
-- Wait 30-60 minutes and retry
-- This only happens when running the pipeline multiple times in a short period
-
-**UnicodeEncodeError on Windows**
-- Make sure you are using the fixed `scheduler.py` which sets `PYTHONIOENCODING=utf-8`
-
-**Step 4 authentication failed**
-- Check `AUTH_URL`, `AUTH_USERNAME`, `AUTH_PASSWORD` in your `.env`
-- Make sure your backend server is running
-
-**Resume interrupted Step 2**
+**Step 2 was interrupted mid-run**
 ```bash
 python run_hiring_cafe_pipeline.py --skip-step1
 ```
-Step 2 saves progress after every single job — it will pick up exactly where it left off.
+Step 2 saves progress after every single job — it resumes exactly where it stopped with no data loss.
+
+**Step 4 authentication failed**
+- Verify `AUTH_URL`, `AUTH_USERNAME`, `AUTH_PASSWORD` in `.env`
+- Confirm your backend server is running and the login endpoint is reachable
+
+**Chrome version mismatch error**
+- `browser.py` auto-detects your installed Chrome version from the Windows registry
+- If detection fails, the fallback version is `146` — update the fallback in `core/browser.py` if needed
+
+**Unicode / emoji errors on Windows**
+- Set `PYTHONUTF8=1` before running, or use the BAT launcher which sets this automatically
 
 ---
 
-## 📄 License
+## License
 
 MIT

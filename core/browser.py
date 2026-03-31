@@ -150,6 +150,41 @@ from core.proxy_manager import proxy_manager
 _LAUNCHED_BY_SCHEDULER = os.environ.get("SCHEDULER_LAUNCHED", "0") == "1"
 
 
+def _get_chrome_version():
+    """Retrieves the installed Chrome version on Windows or Linux."""
+    if sys.platform == "win32":
+        import winreg
+        # Locations to check for Chrome version in registry
+        paths = [
+            (winreg.HKEY_CURRENT_USER, r"Software\Google\Chrome\BLBeacon", "version"),
+            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Google Chrome", "DisplayVersion"),
+            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Google Chrome", "DisplayVersion"),
+        ]
+        for root, path, value_name in paths:
+            try:
+                key = winreg.OpenKey(root, path)
+                version, _ = winreg.QueryValueEx(key, value_name)
+                major_version = int(version.split('.')[0])
+                logger.info(f"Detected Chrome version: {major_version} (from {path})")
+                return major_version
+            except Exception:
+                continue
+    
+    # Fallback/Linux: Try to get version from command line
+    try:
+        import subprocess
+        output = subprocess.check_output(["google-chrome", "--version"], stderr=subprocess.STDOUT).decode()
+        # "Google Chrome 114.0.5735.90"
+        major_version = int(output.split()[2].split('.')[0])
+        return major_version
+    except Exception:
+        pass
+
+    # Default fallback
+    logger.warning("Could not detect Chrome version dynamically; using default 146.")
+    return 146
+
+
 class BrowserService:
     def __init__(self):
         self.driver = None
@@ -283,12 +318,13 @@ class BrowserService:
 
         if uc:
             try:
+                chrome_version = _get_chrome_version()
                 self.driver = uc.Chrome(
                     options=options,
                     use_subprocess=True,
-                    version_main=146,
+                    version_main=chrome_version,
                 )
-                logger.info("Browser started successfully (undetected-chromedriver).")
+                logger.info(f"Browser started successfully (undetected-chromedriver v{chrome_version}).")
             except Exception as e:
                 logger.warning(f"uc.Chrome failed to start: {e}. Attempting fallback using webdriver-manager.")
 

@@ -1795,8 +1795,6 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
-from models.config_models import JobListing
-
 # Hiring Cafe job link: <a href="/viewjob/{job_id}">...</a>
 JOB_LINK_SELECTOR = 'a[href^="/viewjob/"]'
 
@@ -3326,7 +3324,7 @@ class HiringCafeStrategy(BaseStrategy):
         logger.info("✅ Unique jobs across all keywords: %d", len(merged))
         return merged
 
-    def apply(self, listing: JobListing):
+    def apply(self, listing: dict):
         logger.warning("⚠️ Apply functionality not implemented for Hiring Cafe")
         return False
 
