@@ -246,46 +246,56 @@ def _kill_chrome_profile_locks(root: Path) -> None:
         print(f"   🔓 Removed Chrome lock files: {', '.join(removed)}")
 
 
-def _clear_chrome_profile_cache(root: Path) -> None:
+def _nuke_chrome_profile(root: Path) -> None:
     """
-    Clear Chrome cache directories before each pipeline run.
+    Completely wipe the Chrome profile before each pipeline run.
 
-    WHY THIS HELPS
-    ──────────────
-    The Chrome profile accumulates bot-detection signals over repeated
-    automated runs — cached responses, service worker state, and network
-    logs that Cloudflare fingerprints. Clearing these directories resets
-    the fingerprint each time so hiring.cafe sees a "fresh" browser session.
+    WHY A FULL WIPE IS NEEDED (not just cache dirs)
+    ─────────────────────────────────────────────────
+    Cloudflare does NOT rely only on HTTP cache to fingerprint bots.
+    It uses a combination of:
+      • Cookies            → track session continuity
+      • localStorage       → store fingerprint tokens
+      • IndexedDB          → store extended fingerprint data
+      • Service Worker     → persist blocking state across loads
+      • Cache API / GPUCache → cached page responses
 
-    We only clear cache/network dirs, NOT cookies or local storage, so
-    the browser still looks like it has some history (which is desirable).
+    Clearing only 4-5 cache sub-dirs (the old approach) leaves cookies,
+    localStorage, and IndexedDB intact. Cloudflare reads these on the SECOND
+    daily run (4PM) and immediately serves the empty React shell (divs=65,
+    links=7), blocking ALL 5 retry attempts for EVERY keyword.
+
+    THE FIX: delete the entire `Default/` profile directory so Chrome starts
+    each run as a completely new, never-seen browser identity. Since hiring.cafe
+    does not require login, there is nothing valuable to preserve in the profile.
+
+    What is preserved:
+      • The `chrome_profile/` parent directory (Chrome recreates Default/ on startup)
+      • All other top-level Chrome dirs (Crashpad, GrShaderCache, etc.) — harmless
     """
     chrome_profile = root / "chrome_profile"
-    if not chrome_profile.exists():
+    default_dir = chrome_profile / "Default"
+
+    if not default_dir.exists():
+        print(f"   ℹ️  Chrome profile Default/ not found — fresh start (nothing to wipe)")
         return
 
-    # Directories that contain cache/fingerprint data — safe to delete each run
-    dirs_to_clear = [
-        "Default/Cache",
-        "Default/Code Cache",
-        "Default/GPUCache",
-        "Default/Service Worker",
-        "Default/Network",
-    ]
-    cleared = []
-    for d in dirs_to_clear:
-        target = chrome_profile / d
-        if target.exists():
-            try:
-                shutil.rmtree(target)
-                cleared.append(d)
-            except Exception as e:
-                print(f"   ⚠️  Could not clear cache dir {d}: {e}")
-
-    if cleared:
-        print(f"   🧹 Cleared Chrome cache: {len(cleared)} dirs reset (bot fingerprint reset)")
-    else:
-        print(f"   ℹ️  Chrome cache dirs not found (first run or already clean)")
+    try:
+        shutil.rmtree(default_dir)
+        print(f"   🧹 Nuked Chrome profile Default/ → Cloudflare will see a brand-new browser identity")
+    except Exception as e:
+        print(f"   ⚠️  Could not fully nuke Chrome profile: {e}")
+        print(f"   ⚠️  Falling back to partial cache clear...")
+        # Fallback: clear as many sub-dirs as possible
+        for sub in ["Cache", "Code Cache", "GPUCache", "Service Worker", "Network",
+                    "Cookies", "Local Storage", "IndexedDB", "Session Storage"]:
+            target = default_dir / sub
+            if target.exists():
+                try:
+                    shutil.rmtree(target)
+                    print(f"      🗑  Cleared: {sub}")
+                except Exception as e2:
+                    print(f"      ⚠️  Could not clear {sub}: {e2}")
 
 
 def _run_step(label: str, script: Path, extra_args: list = []) -> bool:
@@ -405,15 +415,16 @@ def run_pipeline(args_list=None) -> dict:
     print(f"   Run ID  : {run_id}")
     print(f"   Root    : {ROOT}")
 
-    # ── PRE-FLIGHT: Kill stale Chrome + remove profile locks + clear cache ────
-    # Clearing the cache resets the bot-detection fingerprint that Cloudflare
-    # builds up from repeated automated Chrome sessions. This is the primary
-    # fix for intermittent 0-job runs caused by blocking.
+    # ── PRE-FLIGHT: Kill stale Chrome + nuke full profile + remove locks ──────
+    # We wipe the ENTIRE Chrome Default/ profile directory before every run.
+    # This is the primary fix for consistent 4PM blocks: Cloudflare fingerprints
+    # cookies, localStorage, and IndexedDB left by the 9AM run — a cache-only
+    # clear is not enough. hiring.cafe requires no login so nothing is lost.
     print(f"\n   🧹 Pre-flight: killing stale Chrome processes...")
     _kill_chrome()
     time.sleep(1)  # Give OS time to release file handles
     _kill_chrome_profile_locks(ROOT)
-    _clear_chrome_profile_cache(ROOT)   # ← NEW: resets bot fingerprint each run
+    _nuke_chrome_profile(ROOT)   # ← Full profile wipe: resets ALL Cloudflare fingerprint state
     print(f"   ✅ Pre-flight complete")
 
     results = {}

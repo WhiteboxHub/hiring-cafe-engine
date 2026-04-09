@@ -287,6 +287,21 @@ class BrowserService:
         if _LAUNCHED_BY_SCHEDULER:
             logger.info("Scheduler-mode: applied anti-detection Chrome flags.")
 
+    @staticmethod
+    def _force_kill_chrome():
+        """Kill all running Chrome and ChromeDriver processes to clear stale sessions."""
+        import subprocess
+        for proc in ("chrome.exe", "chromedriver.exe"):
+            try:
+                subprocess.run(
+                    ["taskkill", "/F", "/IM", proc],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            except Exception:
+                pass
+        time.sleep(2)  # Give OS time to release file handles on the profile
+
     def start_browser(self):
         self._acquire_lock()
 
@@ -317,8 +332,9 @@ class BrowserService:
         self._apply_scheduler_flags(options)
 
         if uc:
+            chrome_version = _get_chrome_version()
+            # Attempt 1 — normal launch
             try:
-                chrome_version = _get_chrome_version()
                 self.driver = uc.Chrome(
                     options=options,
                     use_subprocess=True,
@@ -326,8 +342,26 @@ class BrowserService:
                 )
                 logger.info(f"Browser started successfully (undetected-chromedriver v{chrome_version}).")
             except Exception as e:
-                logger.warning(f"uc.Chrome failed to start: {e}. Attempting fallback using webdriver-manager.")
+                logger.warning(
+                    f"uc.Chrome attempt 1 failed (v{chrome_version}): {e}\n"
+                    "Force-killing stale Chrome processes and retrying..."
+                )
+                self._force_kill_chrome()
+                # Attempt 2 — retry after killing stale processes
+                try:
+                    self.driver = uc.Chrome(
+                        options=options,
+                        use_subprocess=True,
+                        version_main=chrome_version,
+                    )
+                    logger.info(f"Browser started on retry (undetected-chromedriver v{chrome_version}).")
+                except Exception as e2:
+                    logger.error(
+                        f"uc.Chrome attempt 2 also failed (v{chrome_version}): {e2}\n"
+                        "Falling back to webdriver-manager."
+                    )
 
+        # Fallback — webdriver-manager
         if not self.driver:
             try:
                 from selenium import webdriver
@@ -337,12 +371,20 @@ class BrowserService:
                 service = ChromeService(ChromeDriverManager().install())
                 self.driver = webdriver.Chrome(service=service, options=options)
                 logger.info("Browser started successfully (webdriver-manager fallback).")
-            except Exception as e2:
-                logger.error(f"Failed to start browser with fallback: {e2}")
+            except Exception as e3:
+                logger.error(f"Failed to start browser with fallback: {e3}")
                 self._release_lock()
                 raise
 
-        if self.driver and not settings.HEADLESS:
+        # Fail-fast guard — never proceed with a None driver
+        if not self.driver:
+            self._release_lock()
+            raise RuntimeError(
+                "BrowserService.start_browser() failed: driver is None after all attempts. "
+                "Check Chrome installation and profile lock files."
+            )
+
+        if not settings.HEADLESS:
             try:
                 self.driver.maximize_window()
             except Exception as e:
