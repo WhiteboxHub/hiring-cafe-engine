@@ -27,6 +27,14 @@ class Settings(BaseSettings):
     AUTH_USERNAME: str | None = None
     AUTH_PASSWORD: str | None = None
 
+    # Email Reporting Setup
+    SMTP_SERVER: str | None = "smtp.gmail.com"
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: str | None = None
+    SMTP_PASSWORD: str | None = None
+    REPORT_RECEIVER_EMAIL: str | None = None
+    SENDER_EMAIL: str | None = None
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

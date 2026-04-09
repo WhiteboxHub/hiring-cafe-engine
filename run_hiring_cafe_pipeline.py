@@ -546,6 +546,13 @@ def run_pipeline(args_list=None) -> dict:
     print(f"   📝 Run log → logs/pipeline_runs.log")
     print("=" * 60)
 
+    # ── EMAIL REPORT ──────────────────────────────────────────────────────────
+    try:
+        from core.email_reporter import email_reporter
+        email_reporter.send_report(str(BY_ATS_FILE))
+    except Exception as email_err:
+        print(f"   ⚠️  Email report failed: {email_err}")
+
     if results.get("step1") == "failed" or results.get("step3") == "failed":
         return {"status": "failed", "jobs_saved": jobs_with_ats, "jobs_found": jobs_count, "timestamp": _now()}
 
