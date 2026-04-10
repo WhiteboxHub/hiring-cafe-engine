@@ -31,12 +31,6 @@ hiring-cafe-engine/
 │   ├── hiring_cafe_step2_extract_ats_urls.py   # Extract ATS apply URLs (checkpoint-safe)
 │   ├── hiring_cafe_step3_combine_by_ats.py     # Group jobs by ATS platform
 │   ├── hiring_cafe_step4_ingest_to_api.py      # Normalize & send to backend API
-│   ├── categorize_hiring_cafe_by_ats.py        # Utility: categorize by ATS
-│   ├── scrape_hiring_cafe.py                   # Standalone scraper
-│   ├── init_db.py                              # Initialize DuckDB database
-│   ├── check_db.py                             # Inspect database content
-│   ├── query_db.py                             # Run SQL queries on DB
-│   ├── main.py                                 # Engine entry point
 │   └── test_api_payload.py                     # Preview API payload (dry run)
 │
 ├── core/
@@ -58,8 +52,7 @@ hiring-cafe-engine/
 │   ├── data_loader.py      # JSON config loader
 │   └── secrets_validator.py
 │
-├── data/
-│   └── job_engine.duckdb   # Local DuckDB database
+├── data/                   # (Optional) For persistent storage
 │
 ├── docs/
 │   └── HIRING_CAFE_THREE_STEPS.md   # Step-by-step usage guide
@@ -110,9 +103,6 @@ Create a `.env` file in the project root:
 CHROME_USER_DATA_DIR=./chrome_profile
 HEADLESS=false
 
-# ── Database ─────────────────────────────────────────────
-DUCKDB_PATH=data/job_engine.duckdb
-
 # ── Proxy (optional) ─────────────────────────────────────
 PROXY_URL=
 
@@ -126,11 +116,7 @@ AUTH_PASSWORD=your_password
 # API_TOKEN=your_static_bearer_token
 ```
 
-### 5. Initialize the database
-
-```bash
-python scripts/init_db.py
-```
+### 5. Start the pipeline!
 
 ---
 
@@ -207,7 +193,16 @@ python scripts/hiring_cafe_step4_ingest_to_api.py --input hiring_cafe_by_ats.jso
 Before Step 1 launches, the pipeline automatically:
 - Kills any stale `chrome.exe` / `chromedriver.exe` processes
 - Removes Chrome profile lock files (`SingletonLock`, `Default/LOCK`, etc.)
-- Clears Chrome cache directories — resets the Cloudflare bot fingerprint each run
+- **Nukes the Chrome profile** (`Default/` directory) — resets the Cloudflare bot fingerprint and prevents identity tracking.
+
+---
+
+## Email Reporting
+
+The pipeline includes an automatic email reporting system (`core/email_reporter.py`).
+- Upon completion, an HTML summary of newly discovered jobs is sent to the configured recipient.
+- The summary includes job counts categorized by ATS platform.
+- The `hiring_cafe_by_ats.json` file is attached for manual review.
 
 ---
 
@@ -262,16 +257,6 @@ Windows Task Scheduler
 Workday · Greenhouse · Lever · Ashby · SmartRecruiters · iCIMS · Jobvite · Rippling · Taleo · BambooHR · Recruitee · Teamtailor · Workable · Oracle · SAP SuccessFactors · Paylocity · Breezy · JazzHR · BrassRing · ADP · and more
 
 ---
-
-## Database Utilities
-
-```bash
-# Inspect database tables and row counts
-python scripts/check_db.py
-
-# Run custom SQL queries
-python scripts/query_db.py
-```
 
 ---
 
