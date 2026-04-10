@@ -2,8 +2,10 @@ from strategies.base import BaseStrategy
 from core.logger import logger
 from core.human_behavior import HumanBehavior
 from core.safe_actions import SafeActions
+from config.settings import settings
 import json
 import os
+import random
 import re
 import time
 from datetime import datetime
@@ -413,16 +415,72 @@ class HiringCafeStrategy(BaseStrategy):
         self.human = HumanBehavior(driver)
         self.base_url = base_url
         self.search_url = search_url
+        self._random_pause_lo = float(settings.HIRING_CAFE_RANDOM_PAUSE_MIN_SEC)
+        self._random_pause_hi = float(settings.HIRING_CAFE_RANDOM_PAUSE_MAX_SEC)
+        self._scroll_step_lo = float(settings.HIRING_CAFE_SCROLL_STEP_MIN_SEC)
+        self._scroll_step_hi = float(settings.HIRING_CAFE_SCROLL_STEP_MAX_SEC)
+        self._step2_pause_lo = float(settings.HIRING_CAFE_STEP2_PAUSE_MIN_SEC)
+        self._step2_pause_hi = float(settings.HIRING_CAFE_STEP2_PAUSE_MAX_SEC)
+        self._step2_page_lo = float(settings.HIRING_CAFE_STEP2_PAGE_SETTLE_MIN_SEC)
+        self._step2_page_hi = float(settings.HIRING_CAFE_STEP2_PAGE_SETTLE_MAX_SEC)
+        self._step2_shuffle_pending = bool(settings.HIRING_CAFE_STEP2_SHUFFLE_PENDING)
+        self._step2_break_every_n = int(settings.HIRING_CAFE_STEP2_BREAK_EVERY_N)
+        self._step2_long_break_lo = float(settings.HIRING_CAFE_STEP2_LONG_BREAK_MIN_SEC)
+        self._step2_long_break_hi = float(settings.HIRING_CAFE_STEP2_LONG_BREAK_MAX_SEC)
+        self._step2_mouse_jitter = bool(settings.HIRING_CAFE_STEP2_MOUSE_JITTER)
 
         logger.info(
-            "✅ HiringCafeStrategy initialized (keywords=%s, date_fetched_past_n_days=%s)",
+            "✅ HiringCafeStrategy initialized (keywords=%s, date_fetched_past_n_days=%s, "
+            "human_pause=%.1f–%.1fs, scroll_step=%.1f–%.1fs, step2_between=%.1f–%.1fs, "
+            "step2_page_settle=%.1f–%.1fs, shuffle_pending=%s, break_every_n=%d)",
             self._search_keywords,
             self._date_fetched_past_n_days,
+            self._random_pause_lo,
+            self._random_pause_hi,
+            self._scroll_step_lo,
+            self._scroll_step_hi,
+            self._step2_pause_lo,
+            self._step2_pause_hi,
+            self._step2_page_lo,
+            self._step2_page_hi,
+            self._step2_shuffle_pending,
+            self._step2_break_every_n,
         )
 
     def login(self):
         logger.info("ℹ️ No login required for Hiring Cafe")
         return True
+
+    def _random_human_pause(
+        self,
+        label: str | None = None,
+        lo: float | None = None,
+        hi: float | None = None,
+    ) -> float:
+        """
+        Sleep a random duration (new draw each call). Default range = Step 1 settings;
+        pass lo/hi for Step 2 between-job pauses or other overrides.
+        """
+        lo = self._random_pause_lo if lo is None else float(lo)
+        hi = self._random_pause_hi if hi is None else float(hi)
+        if hi < lo:
+            lo, hi = hi, lo
+        sec = random.uniform(lo, hi)
+        if label:
+            logger.info("⏳ Human pause (%s): %.1fs (range %.1f–%.1fs)", label, sec, lo, hi)
+        else:
+            logger.info("⏳ Human pause: %.1fs (range %.1f–%.1fs)", sec, lo, hi)
+        time.sleep(sec)
+        return sec
+
+    def _random_scroll_step_pause(self) -> float:
+        """Random wait between infinite-scroll steps (new value each scroll)."""
+        lo, hi = self._scroll_step_lo, self._scroll_step_hi
+        if hi < lo:
+            lo, hi = hi, lo
+        sec = random.uniform(lo, hi)
+        time.sleep(sec)
+        return sec
 
     def _scroll_to_bottom(self):
         self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
@@ -629,8 +687,12 @@ class HiringCafeStrategy(BaseStrategy):
 
         return data
 
-    def _scroll_until_end(self, max_scrolls=100, scroll_delay=2):
-        logger.info("🔄 Starting infinite scroll to load all positions...")
+    def _scroll_until_end(self, max_scrolls=100):
+        logger.info(
+            "🔄 Starting infinite scroll (random step %.1f–%.1fs each)...",
+            self._scroll_step_lo,
+            self._scroll_step_hi,
+        )
         previous_count = 0
         no_change_count = 0
         scroll_attempts = 0
@@ -653,7 +715,7 @@ class HiringCafeStrategy(BaseStrategy):
             try:
                 last_height = self.driver.execute_script("return document.body.scrollHeight")
                 self._scroll_to_bottom()
-                time.sleep(scroll_delay)
+                self._random_scroll_step_pause()
                 new_height = self.driver.execute_script("return document.body.scrollHeight")
                 if new_height == last_height:
                     self.driver.execute_script("window.scrollBy(0, 500);")
@@ -949,8 +1011,15 @@ class HiringCafeStrategy(BaseStrategy):
         }
         try:
             self.driver.get(job_url)
-            time.sleep(3)
-            self.human.random_delay(1, 2)
+            p_lo, p_hi = self._step2_page_lo, self._step2_page_hi
+            if p_hi < p_lo:
+                p_lo, p_hi = p_hi, p_lo
+            time.sleep(random.uniform(p_lo, p_hi))
+            if self._step2_mouse_jitter:
+                try:
+                    self.human.move_mouse_randomly()
+                except Exception:
+                    pass
 
             main_handle = self.driver.current_window_handle
 
@@ -1118,15 +1187,16 @@ class HiringCafeStrategy(BaseStrategy):
             )
         logger.info("🔗 Step 2: Extracting ATS URLs for %d jobs...", remaining)
 
-        for i, job in enumerate(to_process):
+        pending = [j for j in to_process if "ats_url" not in j]
+        if self._step2_shuffle_pending and len(pending) > 1:
+            random.shuffle(pending)
+            logger.info("🔀 Shuffled %d pending jobs (HIRING_CAFE_STEP2_SHUFFLE_PENDING=1)", len(pending))
+
+        for step_idx, job in enumerate(pending, start=1):
             jid = job.get("job_id") or job.get("external_id")
             if not jid:
                 job.setdefault("ats_url", None)
                 job.setdefault("ats_platform", None)
-                continue
-
-            # ── SKIP if this job was already attempted (key exists) ──────────
-            if "ats_url" in job:
                 continue
 
             hiring_cafe_url = (
@@ -1134,7 +1204,7 @@ class HiringCafeStrategy(BaseStrategy):
                 or job.get("hiring_cafe_url")
                 or f"{self.base_url}/viewjob/{jid}"
             )
-            logger.info(f"Enriching job {i+1}/{len(to_process)}: {jid}")
+            logger.info(f"Enriching job {step_idx}/{len(pending)}: {jid}")
 
             # ── Check Chrome is still alive before each job ───────────────
             if not self._is_session_alive():
@@ -1199,8 +1269,21 @@ class HiringCafeStrategy(BaseStrategy):
                     pass
                 time.sleep(40)
                 consecutive_failures = 0
+            elif (
+                self._step2_break_every_n > 0
+                and step_idx % self._step2_break_every_n == 0
+            ):
+                self._random_human_pause(
+                    "step2 micro-break",
+                    self._step2_long_break_lo,
+                    self._step2_long_break_hi,
+                )
             else:
-                self.human.random_delay(2, 4)
+                self._random_human_pause(
+                    "between ATS jobs",
+                    self._step2_pause_lo,
+                    self._step2_pause_hi,
+                )
 
         # Ensure jobs outside the limit window still have the key
         if limit is not None:
@@ -1261,7 +1344,11 @@ class HiringCafeStrategy(BaseStrategy):
                         time.sleep(40)
                         consecutive_failures = 0
                     else:
-                        self.human.random_delay(2, 4)
+                        self._random_human_pause(
+                            "between ATS jobs",
+                            self._step2_pause_lo,
+                            self._step2_pause_hi,
+                        )
 
                 if output_file:
                     self._write_jobs_payload(output_file, jobs)
@@ -1340,12 +1427,11 @@ class HiringCafeStrategy(BaseStrategy):
         try:
             logger.info("🏠 Pre-warming session via homepage...")
             self.driver.get(self.base_url)
-            time.sleep(8)
-            self.human.random_delay(3, 6)
+            time.sleep(2)
+            self._random_human_pause("homepage read")
             # Scroll a little to simulate reading
             self.driver.execute_script("window.scrollTo(0, 300);")
-            time.sleep(2)
-            self.human.random_delay(1, 3)
+            self.human.random_delay(1, 2)
             logger.info("✅ Pre-warm complete")
         except Exception as e:
             logger.warning(f"Pre-warm failed (non-fatal): {e}")
@@ -1359,15 +1445,13 @@ class HiringCafeStrategy(BaseStrategy):
                 if attempt > 1:
                     logger.info("🏠 Resetting via homepage before retry...")
                     self.driver.get(self.base_url)
-                    # FIX: increased from 3s → 8s + longer random delay
-                    time.sleep(8)
-                    self.human.random_delay(4, 8)
+                    time.sleep(2)
+                    self._random_human_pause("retry homepage")
 
                 self.driver.get(search_url)
 
-                # FIX: increased initial wait from 4s → 10s + longer random delay
-                time.sleep(10)
-                self.human.random_delay(4, 7)
+                time.sleep(2)
+                self._random_human_pause("search results load")
 
                 # Verify we actually landed on hiring.cafe
                 actual_url = self.driver.current_url
@@ -1414,8 +1498,8 @@ class HiringCafeStrategy(BaseStrategy):
                         continue
                     return []
 
-                # Scroll to load all jobs
-                self._scroll_until_end(max_scrolls=100, scroll_delay=2)
+                # Scroll to load all jobs (random delay between scroll steps is inside _scroll_until_end)
+                self._scroll_until_end(max_scrolls=100)
                 jobs = self._extract_job_listings()
                 logger.info("✅ Keyword %r: %d jobs", keyword, len(jobs))
                 return jobs
@@ -1533,10 +1617,7 @@ class HiringCafeStrategy(BaseStrategy):
                 )
             keyword_job_lists.append((keyword, jobs))
             if i < len(self._search_keywords) - 1:
-                delay = 12 + (i * 3)  # 12s, 15s, 18s, 21s — progressive to look more human
-                logger.info("⏳ Waiting %ds before next keyword search...", delay)
-                time.sleep(delay)
-                self.human.random_delay(2, 5)
+                self._random_human_pause("next keyword")
         merged = self._merge_jobs_unique(keyword_job_lists)
         logger.info("✅ Unique jobs across all keywords: %d", len(merged))
         return merged

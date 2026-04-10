@@ -161,12 +161,15 @@ USAGE
 import argparse
 import json
 import os
+import random
 import shutil
 import subprocess
 import sys
 import time
 from datetime import datetime
 from pathlib import Path
+
+from config.settings import settings
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 ROOT        = Path(__file__).resolve().parent
@@ -414,6 +417,12 @@ def run_pipeline(args_list=None) -> dict:
     _banner(f"🚀 hiring.cafe Pipeline  —  {_now()}")
     print(f"   Run ID  : {run_id}")
     print(f"   Root    : {ROOT}")
+
+    jitter_max = float(settings.HIRING_CAFE_PIPELINE_START_JITTER_MAX_SEC or 0)
+    if jitter_max > 0:
+        jitter_sec = random.uniform(0, jitter_max)
+        print(f"\n   🎲 Start jitter: sleeping {jitter_sec:.1f}s (uniform 0–{jitter_max:.0f}s) to stagger scheduled runs...")
+        time.sleep(jitter_sec)
 
     # ── PRE-FLIGHT: Kill stale Chrome + nuke full profile + remove locks ──────
     # We wipe the ENTIRE Chrome Default/ profile directory before every run.

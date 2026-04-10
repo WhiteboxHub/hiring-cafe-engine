@@ -27,6 +27,29 @@ class Settings(BaseSettings):
     AUTH_USERNAME: str | None = None
     AUTH_PASSWORD: str | None = None
 
+    # Hiring Cafe scrape pacing (helps when rate-limited)
+    # Random "human" pauses (seconds) — each call picks a new value in [min, max] (e.g. 16s then 25s)
+    HIRING_CAFE_RANDOM_PAUSE_MIN_SEC: float = 10.0
+    HIRING_CAFE_RANDOM_PAUSE_MAX_SEC: float = 50.0
+    # Between infinite-scroll steps (each scroll gets a new random wait; keep < random pause above or runs get very long)
+    HIRING_CAFE_SCROLL_STEP_MIN_SEC: float = 1.5
+    HIRING_CAFE_SCROLL_STEP_MAX_SEC: float = 8.0
+    # Step 2: random pause after each job (many pages — defaults shorter than Step 1; set 10–50 to match Step 1)
+    HIRING_CAFE_STEP2_PAUSE_MIN_SEC: float = 2.0
+    HIRING_CAFE_STEP2_PAUSE_MAX_SEC: float = 8.0
+    # After driver.get(viewjob/...) — random settle before DOM reads (new draw each job)
+    HIRING_CAFE_STEP2_PAGE_SETTLE_MIN_SEC: float = 2.0
+    HIRING_CAFE_STEP2_PAGE_SETTLE_MAX_SEC: float = 5.5
+    # Process remaining jobs in random order (same checkpoint/resume; reduces strict ID order)
+    HIRING_CAFE_STEP2_SHUFFLE_PENDING: bool = False
+    # Every N completed jobs, take a longer pause (0 = disabled). Helps mimic breaks + spread load.
+    HIRING_CAFE_STEP2_BREAK_EVERY_N: int = 0
+    HIRING_CAFE_STEP2_LONG_BREAK_MIN_SEC: float = 30.0
+    HIRING_CAFE_STEP2_LONG_BREAK_MAX_SEC: float = 120.0
+    HIRING_CAFE_STEP2_MOUSE_JITTER: bool = True
+    # Full pipeline: sleep random 0..max seconds before pre-flight (stagger scheduled runs)
+    HIRING_CAFE_PIPELINE_START_JITTER_MAX_SEC: float = 0.0
+
     # Email Reporting Setup
     SMTP_SERVER: str | None = "smtp.gmail.com"
     SMTP_PORT: int = 587
