@@ -9,10 +9,12 @@ Flow
 4. Update logs and next_run_at
 """
 
+import argparse
 import os
 import sys
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -35,12 +37,47 @@ WORKFLOW_KEY = "hiring_cafe_job_extractor"
 WORKFLOW_ID = 9
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
 def get_api_client():
     return BaseAPIClient()
 
 
 def get_orchestrator_endpoint():
     return "orchestrator"
+
+
+def _utc_now() -> datetime:
+    """Return current time as UTC-aware datetime."""
+    return datetime.now(timezone.utc)
+
+
+def _to_utc_mysql(dt: datetime) -> str:
+    """
+    Convert a datetime to a UTC value in MySQL DATETIME format 'YYYY-MM-DD HH:MM:SS'.
+
+    ROOT CAUSE OF THE BUG
+    ─────────────────────
+    The server DB stores next_run_at as a MySQL DATETIME (no timezone).
+    The server-side Python code treats that stored value as UTC when comparing.
+    The old code sent LOCAL time (e.g. PDT '16:00:00') but the server read it
+    as UTC '16:00:00', meaning the schedule appeared perpetually overdue against
+    real UTC (~19:00), firing every 5 minutes and logging FAILED entries.
+
+    THE FIX: always send UTC values in MySQL-compatible format.
+    MySQL rejects ISO 8601 'Z' suffix — use 'YYYY-MM-DD HH:MM:SS' (UTC value).
+    """
+    if dt.tzinfo is None:
+        # Treat naive datetime as local, convert to UTC
+        import time as _time
+        import calendar
+        local_epoch = calendar.timegm(dt.timetuple())  # local → epoch
+        dt = datetime.utcfromtimestamp(local_epoch)
+    else:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def get_next_run_from_cron(cron_expression: str, timezone_str: str = "America/Los_Angeles") -> str:
@@ -51,20 +88,26 @@ def get_next_run_from_cron(cron_expression: str, timezone_str: str = "America/Lo
     Falls back to a simple parser for the common '0 9,16 * * *' pattern
     so the code works even without croniter installed.
 
-    Returns a string in 'YYYY-MM-DD HH:MM:SS' format.
+    Returns a UTC ISO 8601 string with 'Z' suffix so the server can
+    compare it against offset-aware datetimes without errors.
     """
     now = datetime.now()
 
     # ── Try croniter first (most accurate) ────────────────────────────────
     try:
         from croniter import croniter
-        cron = croniter(cron_expression, now)
+        import pytz
+        tz = pytz.timezone(timezone_str)
+        now_local = datetime.now(tz)
+        cron = croniter(cron_expression, now_local)
         next_run = cron.get_next(datetime)
-        logger.info(f"Next run calculated via croniter: {next_run}")
-        return next_run.strftime("%Y-%m-%d %H:%M:%S")
+        # next_run from croniter with tz-aware start is tz-aware
+        utc_str = _to_utc_mysql(next_run)
+        logger.info(f"Next run calculated via croniter: {next_run} -> UTC: {utc_str}")
+        return utc_str
     except ImportError:
-        logger.warning("croniter not installed. Using built-in cron parser. "
-                       "Run:  venv\\Scripts\\pip install croniter  for full cron support.")
+        logger.warning("croniter/pytz not installed. Using built-in cron parser. "
+                       "Run:  venv\\Scripts\\pip install croniter pytz  for full cron support.")
     except Exception as e:
         logger.warning(f"croniter failed ({e}). Falling back to built-in parser.")
 
@@ -83,22 +126,25 @@ def get_next_run_from_cron(cron_expression: str, timezone_str: str = "America/Lo
             for h in hours:
                 candidate = datetime(today.year, today.month, today.day, h, minute, 0)
                 if candidate > now:
-                    logger.info(f"Next run calculated via built-in parser: {candidate}")
-                    return candidate.strftime("%Y-%m-%d %H:%M:%S")
+                    utc_str = _to_utc_mysql(candidate)
+                    logger.info(f"Next run calculated via built-in parser: {candidate} -> UTC: {utc_str}")
+                    return utc_str
 
             # All today's slots passed → first slot tomorrow
             tomorrow = today + timedelta(days=1)
             next_run = datetime(tomorrow.year, tomorrow.month, tomorrow.day, hours[0], minute, 0)
-            logger.info(f"Next run calculated via built-in parser (tomorrow): {next_run}")
-            return next_run.strftime("%Y-%m-%d %H:%M:%S")
+            utc_str = _to_utc_mysql(next_run)
+            logger.info(f"Next run calculated via built-in parser (tomorrow): {next_run} -> UTC: {utc_str}")
+            return utc_str
 
     except Exception as e:
         logger.warning(f"Built-in cron parser failed ({e}). Using +1 day fallback.")
 
     # ── Last resort ────────────────────────────────────────────────────────
     fallback = now + timedelta(days=1)
-    logger.warning(f"Using fallback next_run_at: {fallback}")
-    return fallback.strftime("%Y-%m-%d %H:%M:%S")
+    utc_str = _to_utc_mysql(fallback)
+    logger.warning(f"Using fallback next_run_at: {utc_str}")
+    return utc_str
 
 
 def get_schedule_from_website():
@@ -132,30 +178,28 @@ def unlock_schedule(schedule_id, cron_expression: str = None, timezone_str: str 
     """
     Unlock the schedule and set next_run_at correctly from the cron expression.
 
-    THE BUG THIS FIXES
-    ──────────────────
-    The old code did:  next_run = now + timedelta(days=interval)
-    With interval=1 that always jumped exactly 24 hours ahead.
-    Result: after the 9AM run completed, next_run_at was set to tomorrow 9AM,
-    and the 4PM slot on the same day was permanently skipped.
-
-    The new code reads the cron expression ('0 9,16 * * *') and finds the
-    next actual future slot — so after the 9AM run it sets next_run_at to
-    4PM the same day, and after the 4PM run it sets it to tomorrow 9AM.
+    KEY FIX (datetime offset-naive/aware bug)
+    ──────────────────────────────────────────
+    The server DB stores next_run_at as a MySQL DATETIME (no timezone).
+    The server-side Python treats stored values as UTC in comparisons.
+    Previously we sent LOCAL time strings, so '16:00:00' PDT was stored
+    and the server compared it as UTC '16:00:00' vs real UTC (~23:00),
+    seeing it as always overdue → fires every 5 min → logs FAILED.
+    FIX: send UTC values in MySQL DATETIME format 'YYYY-MM-DD HH:MM:SS'.
     """
     try:
         client = get_api_client()
-        now = datetime.now()
+        now_utc = _utc_now()
 
         if cron_expression:
             next_run_str = get_next_run_from_cron(cron_expression, timezone_str)
         else:
-            next_run_str = (now + timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
+            next_run_str = _to_utc_mysql(now_utc + timedelta(days=1))
             logger.warning("No cron expression provided to unlock_schedule. Used +1 day fallback.")
 
         payload = {
             "next_run_at": next_run_str,
-            "last_run_at": now.strftime("%Y-%m-%d %H:%M:%S"),
+            "last_run_at": now_utc.strftime("%Y-%m-%d %H:%M:%S"),
             "is_running":  0,
         }
 
@@ -165,7 +209,11 @@ def unlock_schedule(schedule_id, cron_expression: str = None, timezone_str: str 
             f"{get_orchestrator_endpoint()}/schedules/{schedule_id}",
             json=payload,
         )
-        return response.status_code == 200
+        if response.status_code == 200:
+            logger.info(f"Schedule {schedule_id} unlocked successfully.")
+            return True
+        logger.error(f"unlock_schedule failed: {response.status_code} {response.text[:300]}")
+        return False
     except Exception as e:
         logger.error(f"Failed to unlock schedule: {e}")
         return False
@@ -179,11 +227,15 @@ def create_log(workflow_id, schedule_id, run_id):
             "schedule_id": schedule_id,
             "run_id":      run_id,
             "status":      "running",
-            "started_at":  datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "started_at":  _utc_now().strftime("%Y-%m-%d %H:%M:%S"),
         }
         response = client.post(f"{get_orchestrator_endpoint()}/logs", json=payload)
-        if response.status_code == 200:
-            return response.json().get("id")
+        if response.status_code in (200, 201):
+            data = response.json()
+            log_id = data.get("id")
+            logger.info(f"Log created → id={log_id}, run_id={run_id}")
+            return log_id
+        logger.error(f"create_log failed: {response.status_code} {response.text[:300]}")
         return None
     except Exception as e:
         logger.error(f"Failed to create log: {e}")
@@ -195,7 +247,7 @@ def update_log(log_id, status, records_processed=0, error=None, execution_metada
         client = get_api_client()
         payload = {
             "status":            status,
-            "finished_at":       datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "finished_at":       _utc_now().strftime("%Y-%m-%d %H:%M:%S"),
             "records_processed": records_processed,
         }
         if error:
@@ -206,67 +258,150 @@ def update_log(log_id, status, records_processed=0, error=None, execution_metada
             f"{get_orchestrator_endpoint()}/logs/{log_id}",
             json=payload,
         )
-        return response.status_code == 200
+        if response.status_code == 200:
+            logger.info(f"Log {log_id} updated → status={status}, records_processed={records_processed}")
+            return True
+        logger.error(f"update_log failed: {response.status_code} {response.text[:300]}")
+        return False
     except Exception as e:
         logger.error(f"Failed to update log: {e}")
         return False
 
 
-def main():
-    logger.info("Hiring Cafe Scheduler Starting")
+# ─────────────────────────────────────────────────────────────────────────────
+# Debug helper: dump schedule record so you can diagnose the "never due" bug
+# ─────────────────────────────────────────────────────────────────────────────
+def debug_schedule():
+    """
+    Print full details of the schedule record for WORKFLOW_ID from the
+    orchestrator API. Run once to diagnose why it's never returned as due:
 
+        python hiring_cafe_scheduler.py --debug-schedule
+    """
+    try:
+        client = BaseAPIClient()
+
+        # 1. All schedules (see every record)
+        logger.info("── Fetching ALL schedules ──────────────────────────────")
+        r = client.get("orchestrator/schedules")
+        if r.status_code == 200:
+            schedules = r.json()
+            logger.info(f"Total schedules in DB: {len(schedules)}")
+            for s in schedules:
+                logger.info(
+                    f"  id={s.get('id')}  workflow_id={s.get('automation_workflow_id')}  "
+                    f"is_running={s.get('is_running')}  "
+                    f"next_run_at={s.get('next_run_at')}  "
+                    f"last_run_at={s.get('last_run_at')}  "
+                    f"cron={s.get('cron_expression')}"
+                )
+        else:
+            logger.error(f"GET /schedules failed: {r.status_code} {r.text}")
+
+        # 2. Due schedules right now
+        logger.info("── Fetching DUE schedules ──────────────────────────────")
+        r2 = client.get("orchestrator/schedules/due")
+        if r2.status_code == 200:
+            due = r2.json()
+            logger.info(f"Due schedules right now: {len(due)}")
+            for s in due:
+                logger.info(f"  {s}")
+        else:
+            logger.error(f"GET /schedules/due failed: {r2.status_code} {r2.text}")
+
+    except Exception as e:
+        logger.error(f"debug_schedule failed: {e}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# main()
+# ─────────────────────────────────────────────────────────────────────────────
+def main():
+    os.makedirs(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs"),
+        exist_ok=True,
+    )
+
+    # ── CLI args ──────────────────────────────────────────────────────────────
+    parser = argparse.ArgumentParser(description="Hiring Cafe Scheduler")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Run the pipeline even if no schedule is currently due.",
+    )
+    parser.add_argument(
+        "--debug-schedule",
+        action="store_true",
+        help="Print orchestrator schedule details and exit (no pipeline run).",
+    )
+    args = parser.parse_args()
+
+    # ── Debug mode: just dump schedule info and exit ──────────────────────────
+    if args.debug_schedule:
+        debug_schedule()
+        return
+
+    logger.info("Hiring Cafe Scheduler Heartbeat - Polling Orchestrator")
+
+    # ── Try to fetch a due schedule from orchestrator ─────────────────────────
     schedule = None
     api_reachable = True
     try:
         schedule = get_schedule_from_website()
     except Exception as e:
-        logger.warning(f"Failed to connect to orchestrator API: {e}. Running pipeline in standalone mode.")
+        logger.warning(f"Failed to connect to orchestrator API: {e}")
         api_reachable = False
 
-    if not api_reachable or not schedule:
-        if api_reachable:
-            logger.info("No schedule due. Exiting.")
+    # ── Decide whether to proceed ─────────────────────────────────────────────
+    if not schedule:
+        if not api_reachable:
+            logger.warning("Orchestrator API unreachable.")
+        else:
+            logger.info("No schedule due.")
+
+        if not args.force:
+            # Normal exit — nothing to do
             return
 
-        logger.warning("Running pipeline in standalone mode due to API unreachability.")
-        try:
-            logger.info("Running Hiring Cafe Pipeline (standalone)")
-            results = run_pipeline()
-            logger.info(f"Standalone pipeline finished. Results: {results}")
-        except Exception as e:
-            logger.error(f"Standalone pipeline failed: {e}")
-        finally:
-            logger.info("Scheduler Finished (standalone mode)")
-        return
+        logger.info("--force provided. Proceeding with pipeline run.")
 
-# ── Extract schedule metadata if API returned one ──────────────────────
-    schedule_id  = schedule.get("id")  if schedule else None
+    else:
+        logger.info(
+            f"Schedule due → id={schedule.get('id')}, "
+            f"cron='{schedule.get('cron_expression')}', "
+            f"tz={schedule.get('timezone')}"
+        )
+
+    # ── Extract schedule metadata ─────────────────────────────────────────────
+    schedule_id  = schedule.get("id")               if schedule else None
     workflow_id  = schedule.get("automation_workflow_id") if schedule else WORKFLOW_ID
     cron_expr    = schedule.get("cron_expression", "0 9,16 * * *") if schedule else "0 9,16 * * *"
-    timezone_str = schedule.get("timezone", "America/Los_Angeles") if schedule else "America/Los_Angeles"
+    timezone_str = schedule.get("timezone", "America/Los_Angeles")  if schedule else "America/Los_Angeles"
 
-    if not schedule:
-        logger.warning("No schedule due or API unreachable — running pipeline anyway.")
-    else:
-        logger.info(f"Schedule due → id={schedule_id}, cron='{cron_expr}', tz={timezone_str}")
+    # Lock the schedule so concurrent runs can't start
+    if schedule_id:
         if not lock_schedule(schedule_id):
-            logger.warning("Could not lock schedule — running pipeline anyway.")
+            logger.warning("Could not lock schedule — proceeding anyway.")
 
     run_id = str(uuid.uuid4())
     log_id = create_log(workflow_id, schedule_id, run_id) if schedule_id else None
 
+    # ── Run pipeline ──────────────────────────────────────────────────────────
     try:
         logger.info("Running Hiring Cafe Pipeline")
-        results = run_pipeline()
+        # Pass an empty list so run_pipeline() does not read sys.argv
+        # (sys.argv still contains '--force' from the scheduler's own args)
+        results = run_pipeline([])
 
         jobs_processed = results.get("jobs_saved", 0) if results else 0
         execution_metadata = None
         if results:
             execution_metadata = {
-                "jobs_saved": results.get("jobs_saved"),
-                "jobs_found": results.get("jobs_found"),
-                "timestamp":  results.get("timestamp"),
-                "workflow":   WORKFLOW_KEY,
+                "jobs_saved":  results.get("jobs_saved"),
+                "jobs_found":  results.get("jobs_found"),
+                "timestamp":   results.get("timestamp"),
+                "workflow":    WORKFLOW_KEY,
+                "forced_run":  not bool(schedule),
             }
 
         if log_id:
@@ -286,6 +421,7 @@ def main():
         if schedule_id:
             unlock_schedule(schedule_id, cron_expression=cron_expr, timezone_str=timezone_str)
         logger.info("Scheduler Finished")
+
 
 if __name__ == "__main__":
     main()
