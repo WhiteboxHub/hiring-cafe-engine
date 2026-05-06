@@ -389,9 +389,23 @@ def main():
     # ── Run pipeline ──────────────────────────────────────────────────────────
     try:
         logger.info("Running Hiring Cafe Pipeline")
-        # Pass an empty list so run_pipeline() does not read sys.argv
-        # (sys.argv still contains '--force' from the scheduler's own args)
-        results = run_pipeline([])
+        
+        # Determine run name for the email report
+        run_name = "Manual Run"
+        if schedule:
+            # Check current hour to identify which scheduled slot this is
+            now_hour = datetime.now().hour
+            if 8 <= now_hour <= 11:
+                run_name = "9 AM Run"
+            elif 15 <= now_hour <= 18:
+                run_name = "4 PM Run"
+            else:
+                run_name = "Scheduled Run"
+        elif args.force:
+            run_name = "Forced Run"
+
+        # Pass the run name to the pipeline (Step 4 / Email Reporter will use it)
+        results = run_pipeline(["--run-name", run_name])
 
         jobs_processed = results.get("jobs_saved", 0) if results else 0
         execution_metadata = None

@@ -409,6 +409,8 @@ def run_pipeline(args_list=None) -> dict:
                         help="Skip combining. Only run Step 4 (API Ingestion).")
     parser.add_argument("--limit", type=int, metavar="N", default=None,
                         help="Only enrich first N jobs in Step 2 (for testing).")
+    parser.add_argument("--run-name", type=str, default=None,
+                        help="Optional name for this run (e.g. '9 AM Run') to show in report.")
     args = parser.parse_args(args_list)
 
     run_start = time.time()
@@ -558,7 +560,7 @@ def run_pipeline(args_list=None) -> dict:
     # ── EMAIL REPORT ──────────────────────────────────────────────────────────
     try:
         from core.email_reporter import email_reporter
-        email_reporter.send_report(str(BY_ATS_FILE))
+        email_reporter.send_report(str(BY_ATS_FILE), run_name=args.run_name)
     except Exception as email_err:
         print(f"   ⚠️  Email report failed: {email_err}")
 

@@ -63,7 +63,8 @@ setlocal
 :: hiring_cafe_scheduler_launcher.bat
 :: ============================================================
 
-set "ROOT=C:\Users\remot\Desktop\job_engine\hiring-cafe-engine"
+set "ROOT=%~dp0"
+if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 set "VENV=%ROOT%\venv\Scripts\python.exe"
 set "SCRIPT=%ROOT%\hiring_cafe_scheduler.py"
 
