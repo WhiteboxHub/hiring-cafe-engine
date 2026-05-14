@@ -1,0 +1,118 @@
+{
+  "selectors": {
+    "job_link": "a[href^=\"/viewjob/\"]"
+  },
+  "xpaths": {
+    "apply_now_button": "//button[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'apply')] | //a[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'apply') and not(contains(@href, 'hiring.cafe'))]",
+    "apply_button_fallbacks": [
+      "//button[@aria-label and contains(translate(@aria-label,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'apply')]",
+      "//*[@data-testid and contains(translate(@data-testid,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'apply')]",
+      "//a[contains(translate(.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'view job')]",
+      "//button[contains(translate(.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'view job')]",
+      "//a[@target='_blank' and not(contains(@href,'hiring.cafe')) and starts-with(@href,'http')]"
+    ]
+  },
+  "patterns": {
+    "ats_platforms": [
+      ["lever\\\\.co|jobs\\\\.lever\\\\.", "lever"],
+      ["greenhouse\\\\.io|boards\\\\.greenhouse|jobs\\\\.greenhouse|job-boards\\\\.greenhouse", "greenhouse"],
+      ["sapsf\\\\.com|successfactors\\\\.com", "successfactors"],
+      ["workday\\\\.com|myworkdayjobs\\\\.com|wd\\\\d+\\\\.myworkdayjobs\\\\.com", "workday"],
+      ["adp\\\\.com|workforcenow\\\\.adp\\\\.com", "adp"],
+      ["ashhq\\\\.by|ashhqby", "ashhqby"],
+      ["smartrecruiters\\\\.com", "smartrecruiters"],
+      ["icims\\\\.com", "icims"],
+      ["jobvite\\\\.com", "jobvite"],
+      ["taleo\\\\.net|taleocdn", "taleo"],
+      ["apply\\\\.workable\\\\.com|workable\\\\.com", "workable"],
+      ["bamboohr\\\\.com", "bamboohr"],
+      ["paycom\\\\.com", "paycom"],
+      ["paychex\\\\.com|myapps\\\\.paychex\\\\.com", "paychex"],
+      ["ultipro\\\\.com", "ultipro"],
+      ["linkedin\\\\.com/jobs", "linkedin"],
+      ["indeed\\\\.com", "indeed"],
+      ["ashbyhq\\\\.com", "ashby"],
+      ["recruitee\\\\.com", "recruitee"],
+      ["teamtailor\\\\.com", "teamtailor"],
+      ["personio\\\\.com", "personio"],
+      ["oraclecloud\\\\.com", "oraclecloud"],
+      ["applytojob\\\\.com", "applytojob"],
+      ["brassring\\\\.com", "brassring"],
+      ["rippling\\\\.com", "rippling"],
+      ["paylocity\\\\.com", "paylocity"],
+      ["breezy\\\\.hr", "breezy"],
+      ["jazz\\\\.co", "jazz"],
+      ["pinpointrecruitment\\\\.com", "pinpoint"],
+      ["dover\\\\.com", "dover"],
+      ["phenompeople\\\\.com", "phenom"],
+      ["careers\\\\.google\\\\.com/jobs|careers\\\\.google\\\\.com/intl", "google"],
+      ["jobs\\\\.apple\\\\.com", "apple"],
+      ["microsoft\\\\.com/.*careers", "microsoft"],
+      ["workdayjobs\\\\.com", "workday"]
+    ],
+    "ats_url_regex": "https?://(?:[a-z0-9-]+\\\\.lever\\\\.co|jobs\\\\.lever\\\\.co|boards\\\\.greenhouse\\\\.io|[a-z0-9-]+\\\\.greenhouse\\\\.io|jobs\\\\.greenhouse\\\\.io|job-boards\\\\.greenhouse\\\\.io|[a-z0-9-]+\\\\.wd\\\\d+\\\\.myworkdayjobs\\\\.com|[a-z0-9-]+\\\\.myworkdayjobs\\\\.com|[a-z0-9-]+\\\\.workday\\\\.com|[a-z0-9-]+\\\\.successfactors\\\\.com|[a-z0-9-]+\\\\.sapsf\\\\.com|[a-z0-9-]+\\\\.ashbyhq\\\\.com|jobs\\\\.ashbyhq\\\\.com|[a-z0-9-]+\\\\.smartrecruiters\\\\.com|jobs\\\\.smartrecruiters\\\\.com|[a-z0-9-]+\\\\.icims\\\\.com|[a-z0-9-]+\\\\.jobvite\\\\.com|[a-z0-9-]+\\\\.taleo\\\\.net|apply\\\\.workable\\\\.com|[a-z0-9-]+\\\\.workable\\\\.com|[a-z0-9-]+\\\\.bamboohr\\\\.com|[a-z0-9-]+\\\\.recruitee\\\\.com|[a-z0-9-]+\\\\.teamtailor\\\\.com|[a-z0-9-]+\\\\.personio\\\\.com|[a-z0-9-]+\\\\.rippling\\\\.com|[a-z0-9-]+\\\\.paylocity\\\\.com|[a-z0-9-]+\\\\.breezy\\\\.hr|[a-z0-9-]+\\\\.jazz\\\\.co|app\\\\.jazz\\\\.co|[a-z0-9-]+\\\\.applytojob\\\\.com|[a-z0-9-]+\\\\.brassring\\\\.com|[a-z0-9-]+\\\\.oraclecloud\\\\.com|[a-z0-9-]+\\\\.fa\\\\.ocs\\\\.oraclecloud\\\\.com|[a-z0-9-]+\\\\.phenompeople\\\\.com/(?:careers|jobs)|[a-z0-9-]+\\\\.dover\\\\.com|[a-z0-9-]+\\\\.pinpointrecruitment\\\\.com|job-boards\\\\.[a-z0-9-]+\\\\.io)[/\\\\w\\\\-\\\\.\\\\?\\\\=\\\\&\\\\%\\\\#\\\\@\\\\+]*",
+    "non_ats_domains": [
+      "reddit.com",
+      "twitter.com",
+      "x.com",
+      "facebook.com",
+      "linkedin.com/share",
+      "linkedin.com/feed",
+      "t.co",
+      "wa.me",
+      "telegram.me",
+      "whatsapp.com"
+    ],
+    "non_job_path_segments": [
+      "/eeo",
+      "/eeo/",
+      "equal-employment",
+      "equal_employment",
+      "/diversity",
+      "/inclusion",
+      "/accessibility",
+      "/privacy",
+      "/terms",
+      "/legal",
+      "/cookie",
+      "/sitemap",
+      "/about",
+      "/contact",
+      "/press",
+      "/news",
+      "/blog",
+      "/faq",
+      "/help",
+      "/support",
+      "/login",
+      "/register",
+      "/sign-in",
+      "/sign-up",
+      "/subscribe"
+    ],
+    "non_job_extensions": [".pdf", ".doc", ".docx", ".xls", ".xlsx", ".png", ".jpg", ".jpeg", ".gif", ".zip"],
+    "job_path_keywords": [
+      "/job/", "/jobs/", "/job-detail", "/jobdetail", "/jobboard",
+      "/apply/", "/apply?", "/careers/job", "/career/job",
+      "/opening/", "/openings/", "/opportunity/", "/opportunities/",
+      "/req/", "/requisition/", "/vacancy/", "/vacancies/",
+      "/position/", "/positions/", "/listing/", "/listings/",
+      "jobid=", "jobId=", "job_id=", "referenceid=", "reqid="
+    ]
+  },
+  "blocked_thresholds": {
+    "page_sizes": [63178, 63180, 63183, 63184, 63170, 56140],
+    "div_counts": [65, 77],
+    "link_count": 7
+  },
+  "presets": {
+    "date_fetched_past_n_days": {
+      "today": 2,
+      "24h": 2,
+      "3d": 4,
+      "1w": 14,
+      "2w": 21,
+      "all": -1
+    }
+  }
+}

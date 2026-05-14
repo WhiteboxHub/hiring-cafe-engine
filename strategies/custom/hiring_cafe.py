@@ -14,142 +14,10 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
-# Hiring Cafe job link: <a href="/viewjob/{job_id}">...</a>
-JOB_LINK_SELECTOR = 'a[href^="/viewjob/"]'
+from core.locator_loader import LocatorLoader
 
-# Apply now button on job page (opens ATS in new tab)
-# Primary XPath — matches any button/link containing "apply" (case-insensitive)
-APPLY_NOW_BUTTON_XPATH = """
-//button[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'apply')]
-| //a[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'apply') and not(contains(@href, 'hiring.cafe'))]
-"""
-
-# Fallback selectors tried in order when primary XPath finds nothing or times out
-APPLY_BUTTON_FALLBACK_XPATHS = [
-    # Buttons/links with "apply" in aria-label or data attributes
-    "//button[@aria-label and contains(translate(@aria-label,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'apply')]",
-    "//*[@data-testid and contains(translate(@data-testid,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'apply')]",
-    # "View job" / "View posting" links (some companies use this wording)
-    "//a[contains(translate(.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'view job')]",
-    "//button[contains(translate(.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'view job')]",
-    # External links with target=_blank that point outside hiring.cafe
-    "//a[@target='_blank' and not(contains(@href,'hiring.cafe')) and starts-with(@href,'http')]",
-]
-
-# URL host/path patterns -> ATS platform name (lowercase)
-ATS_PLATFORM_PATTERNS = [
-    (r"lever\.co|jobs\.lever\.", "lever"),
-    (r"greenhouse\.io|boards\.greenhouse|jobs\.greenhouse|job-boards\.greenhouse", "greenhouse"),
-    (r"sapsf\.com|successfactors\.com", "successfactors"),
-    (r"workday\.com|myworkdayjobs\.com|wd\d+\.myworkdayjobs\.com", "workday"),
-    (r"adp\.com|workforcenow\.adp\.com", "adp"),
-    (r"ashhq\.by|ashhqby", "ashhqby"),
-    (r"smartrecruiters\.com", "smartrecruiters"),
-    (r"icims\.com", "icims"),
-    (r"jobvite\.com", "jobvite"),
-    (r"taleo\.net|taleocdn", "taleo"),
-    (r"apply\.workable\.com|workable\.com", "workable"),
-    (r"bamboohr\.com", "bamboohr"),
-    (r"paycom\.com", "paycom"),
-    (r"paychex\.com|myapps\.paychex\.com", "paychex"),
-    (r"ultipro\.com", "ultipro"),
-    (r"linkedin\.com/jobs", "linkedin"),
-    (r"indeed\.com", "indeed"),
-    (r"ashbyhq\.com", "ashby"),
-    (r"recruitee\.com", "recruitee"),
-    (r"teamtailor\.com", "teamtailor"),
-    (r"personio\.com", "personio"),
-    (r"oraclecloud\.com", "oraclecloud"),
-    (r"applytojob\.com", "applytojob"),
-    (r"brassring\.com", "brassring"),
-    (r"rippling\.com", "rippling"),
-    (r"paylocity\.com", "paylocity"),
-    (r"breezy\.hr", "breezy"),
-    (r"jazz\.co", "jazz"),
-    (r"pinpointrecruitment\.com", "pinpoint"),
-    (r"dover\.com", "dover"),
-    (r"phenompeople\.com", "phenom"),
-    (r"careers\.google\.com/jobs|careers\.google\.com/intl", "google"),  # only actual job listings
-    (r"jobs\.apple\.com", "apple"),
-    (r"microsoft\.com/.*careers", "microsoft"),
-    (r"workdayjobs\.com", "workday"),
-]
-
-# Fingerprints of hiring.cafe's empty React shell (blocked/rate-limited state).
-# Observed from logs: these exact page source sizes = no jobs loaded.
-BLOCKED_PAGE_SIZES = {63178, 63180, 63183, 63184, 63170, 56140}
-BLOCKED_DIV_COUNT = {65, 77}   # div counts seen on empty pages
-BLOCKED_LINK_COUNT = 7         # link count seen on every empty page
-
-# Regex to find ATS URLs directly in page source HTML
-ATS_URL_REGEX = re.compile(
-    r'https?://(?:'
-    # Lever
-    r'[a-z0-9-]+\.lever\.co'
-    r'|jobs\.lever\.co'
-    # Greenhouse
-    r'|boards\.greenhouse\.io'
-    r'|[a-z0-9-]+\.greenhouse\.io'
-    r'|jobs\.greenhouse\.io'
-    r'|job-boards\.greenhouse\.io'
-    # Workday — matches wd1/wd2/.../wd103/wd5 subdomains AND myworkdayjobs.com
-    r'|[a-z0-9-]+\.wd\d+\.myworkdayjobs\.com'
-    r'|[a-z0-9-]+\.myworkdayjobs\.com'
-    r'|[a-z0-9-]+\.workday\.com'
-    # SAP SuccessFactors
-    r'|[a-z0-9-]+\.successfactors\.com'
-    r'|[a-z0-9-]+\.sapsf\.com'
-    # Ashby
-    r'|[a-z0-9-]+\.ashbyhq\.com'
-    r'|jobs\.ashbyhq\.com'
-    # SmartRecruiters
-    r'|[a-z0-9-]+\.smartrecruiters\.com'
-    r'|jobs\.smartrecruiters\.com'
-    # iCIMS
-    r'|[a-z0-9-]+\.icims\.com'
-    # Jobvite
-    r'|[a-z0-9-]+\.jobvite\.com'
-    # Taleo — matches axp.taleo.net, sjobs.taleo.net etc.
-    r'|[a-z0-9-]+\.taleo\.net'
-    # Workable
-    r'|apply\.workable\.com'
-    r'|[a-z0-9-]+\.workable\.com'
-    # BambooHR
-    r'|[a-z0-9-]+\.bamboohr\.com'
-    # Recruitee
-    r'|[a-z0-9-]+\.recruitee\.com'
-    # Teamtailor
-    r'|[a-z0-9-]+\.teamtailor\.com'
-    # Personio
-    r'|[a-z0-9-]+\.personio\.com'
-    # Rippling
-    r'|[a-z0-9-]+\.rippling\.com'
-    # Paylocity
-    r'|[a-z0-9-]+\.paylocity\.com'
-    # Breezy
-    r'|[a-z0-9-]+\.breezy\.hr'
-    # Jazz HR
-    r'|[a-z0-9-]+\.jazz\.co'
-    r'|app\.jazz\.co'
-    # ApplyToJob — matches pairsoft.applytojob.com etc.
-    r'|[a-z0-9-]+\.applytojob\.com'
-    # BrassRing — matches sjobs.brassring.com etc.
-    r'|[a-z0-9-]+\.brassring\.com'
-    # Oracle HCM / Taleo Cloud
-    r'|[a-z0-9-]+\.oraclecloud\.com'
-    r'|[a-z0-9-]+\.fa\.ocs\.oraclecloud\.com'
-    # Phenom People (phenompeople.com/jobs/ paths only — not CDN/PDF)
-    r'|[a-z0-9-]+\.phenompeople\.com/(?:careers|jobs)'
-    # Dover
-    r'|[a-z0-9-]+\.dover\.com'
-    # Pinpoint
-    r'|[a-z0-9-]+\.pinpointrecruitment\.com'
-    # Greenhouse job-boards subdomain
-    r'|job-boards\.[a-z0-9-]+\.io'
-    r')[/\w\-\.\?\=\&\%\#\@\+]*',
-    re.IGNORECASE
-)
-
+# Initialize locator loader
+locators = LocatorLoader()
 
 def _job_id_from_href(href: str) -> str | None:
     """Extract job ID from href like '/viewjob/p16gu5rnyh9yhp7v'."""
@@ -175,24 +43,15 @@ def _load_hiring_cafe_config() -> dict:
     return {}
 
 
-DATE_FETCHED_PRESETS = {
-    "today": 2,
-    "24h": 2,
-    "3d": 4,
-    "1w": 14,
-    "2w": 21,
-    "all": -1,
-}
-
-
 def _parse_date_fetched_past_n_days(value) -> int:
+    presets = locators.date_fetched_presets
     if value is None:
         return 2
     if isinstance(value, int):
         return value
     s = str(value).strip().lower()
-    if s in DATE_FETCHED_PRESETS:
-        return DATE_FETCHED_PRESETS[s]
+    if s in presets:
+        return presets[s]
     try:
         return int(value)
     except (TypeError, ValueError):
@@ -233,7 +92,7 @@ def detect_ats_platform(url: str) -> str | None:
     if not url:
         return None
     url_lower = url.lower()
-    for pattern, platform in ATS_PLATFORM_PATTERNS:
+    for pattern, platform in locators.ats_platform_patterns:
         if re.search(pattern, url_lower):
             return platform
     return None
@@ -302,17 +161,17 @@ def is_likely_ats_url(url: str) -> bool:
         return False
 
     # Reject social / sharing domains
-    for domain in NON_ATS_URL_DOMAINS:
+    for domain in locators.get("patterns", "non_ats_domains", []):
         if domain in url_lower:
             return False
 
     # Reject file downloads (PDFs, docs, images, etc.)
     path_part = url_lower.split("?")[0].split("#")[0]
-    if any(path_part.endswith(ext) for ext in NON_JOB_EXTENSIONS):
+    if any(path_part.endswith(ext) for ext in locators.get("patterns", "non_job_extensions", [])):
         return False
 
     # Reject policy/non-job pages by path segment
-    for segment in NON_JOB_PATH_SEGMENTS:
+    for segment in locators.get("patterns", "non_job_path_segments", []):
         if segment in url_lower:
             return False
 
@@ -339,14 +198,7 @@ def is_likely_ats_url(url: str) -> bool:
         return True
 
     # URL path contains job-specific keywords (deeper than homepage)
-    job_path_keywords = (
-        "/job/", "/jobs/", "/job-detail", "/jobdetail", "/jobboard",
-        "/apply/", "/apply?", "/careers/job", "/career/job",
-        "/opening/", "/openings/", "/opportunity/", "/opportunities/",
-        "/req/", "/requisition/", "/vacancy/", "/vacancies/",
-        "/position/", "/positions/", "/listing/", "/listings/",
-        "jobid=", "jobId=", "job_id=", "referenceid=", "reqid=",
-    )
+    job_path_keywords = locators.get("patterns", "job_path_keywords", [])
     if any(kw in url_lower for kw in job_path_keywords):
         return True
 
@@ -488,7 +340,8 @@ class HiringCafeStrategy(BaseStrategy):
 
     def _get_viewjob_links(self):
         try:
-            links = self.driver.find_elements(By.CSS_SELECTOR, JOB_LINK_SELECTOR)
+            selector = locators.get("selectors", "job_link")
+            links = self.driver.find_elements(By.CSS_SELECTOR, selector)
             return [el for el in links if el.is_displayed()]
         except Exception as e:
             logger.warning(f"Error finding viewjob links: {e}")
@@ -802,7 +655,11 @@ class HiringCafeStrategy(BaseStrategy):
 
             # ── Pass 1: direct regex scan on raw source ─────────────────────
             candidates = set()
-            for url in ATS_URL_REGEX.findall(source):
+            regex = locators.ats_url_regex
+            if not regex:
+                return []
+                
+            for url in regex.findall(source):
                 url_clean = url.strip().rstrip('"\'\\ ')
                 if "hiring.cafe" not in url_clean.lower():
                     candidates.add(url_clean)
@@ -811,7 +668,7 @@ class HiringCafeStrategy(BaseStrategy):
             # hiring.cafe embeds job data in __NEXT_DATA__ JSON where & -> \u0026
             try:
                 decoded = source.encode('utf-8').decode('unicode_escape', errors='replace')
-                for url in ATS_URL_REGEX.findall(decoded):
+                for url in regex.findall(decoded):
                     url_clean = url.strip().rstrip('"\'\\ ')
                     if "hiring.cafe" not in url_clean.lower():
                         candidates.add(url_clean)
@@ -843,7 +700,7 @@ class HiringCafeStrategy(BaseStrategy):
                         _find_urls(data)
                     except Exception:
                         # Fallback: regex on the blob text
-                        for url in ATS_URL_REGEX.findall(blob):
+                        for url in regex.findall(blob):
                             url_clean = url.strip().rstrip('"\'\\ ')
                             if "hiring.cafe" not in url_clean.lower():
                                 candidates.add(url_clean)
@@ -872,7 +729,8 @@ class HiringCafeStrategy(BaseStrategy):
             )
 
         try:
-            buttons = self.driver.find_elements(By.XPATH, APPLY_NOW_BUTTON_XPATH)
+            xpath = locators.get("xpaths", "apply_now_button")
+            buttons = self.driver.find_elements(By.XPATH, xpath)
 
             if buttons:
                 btn = buttons[0]
@@ -961,15 +819,17 @@ class HiringCafeStrategy(BaseStrategy):
 
         # Try primary XPath with 10s wait
         try:
+            xpath = locators.get("xpaths", "apply_now_button")
             btn = WebDriverWait(self.driver, 10).until(
-                EC.element_to_be_clickable((By.XPATH, APPLY_NOW_BUTTON_XPATH))
+                EC.element_to_be_clickable((By.XPATH, xpath))
             )
             return btn
         except (TimeoutException, NoSuchElementException):
             pass
 
         # Try each fallback XPath with 3s wait
-        for xpath in APPLY_BUTTON_FALLBACK_XPATHS:
+        fallbacks = locators.get("xpaths", "apply_button_fallbacks", [])
+        for xpath in fallbacks:
             try:
                 btn = WebDriverWait(self.driver, 3).until(
                     EC.element_to_be_clickable((By.XPATH, xpath))
@@ -983,7 +843,8 @@ class HiringCafeStrategy(BaseStrategy):
         try:
             self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
             time.sleep(1)
-            btns = self.driver.find_elements(By.XPATH, APPLY_NOW_BUTTON_XPATH)
+            xpath = locators.get("xpaths", "apply_now_button")
+            btns = self.driver.find_elements(By.XPATH, xpath)
             if btns:
                 return btns[0]
         except Exception:
@@ -1367,7 +1228,8 @@ class HiringCafeStrategy(BaseStrategy):
         try:
             src = self.driver.page_source
             src_len = len(src)
-            if src_len in BLOCKED_PAGE_SIZES:
+            blocked_sizes = locators.get("blocked_thresholds", "page_sizes", [])
+            if src_len in blocked_sizes:
                 logger.warning(f"⚠️ Blocked page detected: source length {src_len} matches known blocked fingerprint")
                 return True
 
@@ -1377,7 +1239,9 @@ class HiringCafeStrategy(BaseStrategy):
             try:
                 div_count = len(self.driver.find_elements(By.CSS_SELECTOR, "div"))
                 link_count = len(self.driver.find_elements(By.CSS_SELECTOR, "a"))
-                if div_count in BLOCKED_DIV_COUNT and link_count == BLOCKED_LINK_COUNT:
+                blocked_divs = locators.get("blocked_thresholds", "div_counts", [])
+                blocked_links = locators.get("blocked_thresholds", "link_count")
+                if div_count in blocked_divs and link_count == blocked_links:
                     logger.warning(f"⚠️ Blocked page detected: divs={div_count}, links={link_count} matches blocked fingerprint")
                     return True
             except Exception:
@@ -1399,8 +1263,9 @@ class HiringCafeStrategy(BaseStrategy):
             return False
 
         try:
+            selector = locators.get("selectors", "job_link")
             WebDriverWait(self.driver, timeout).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, JOB_LINK_SELECTOR))
+                EC.presence_of_element_located((By.CSS_SELECTOR, selector))
             )
             logger.info("✅ Job content detected on page")
             return True
