@@ -78,7 +78,7 @@ Examples:
                 "ats_url": e.get("ats", {}).get("url") if isinstance(e.get("ats"), dict) else e.get("ats_url"),
                 # Preserve enriched fields
                 "job_tittle": e.get("job_tittle"),
-                "comapany": e.get("comapany"),
+                "company": e.get("company"),
                 "location": e.get("location"),
                 "city": e.get("city"),
                 "state": e.get("state"),

@@ -80,7 +80,23 @@ def _resume_stats(jobs: list[dict], limit: int | None) -> tuple[int, int]:
     """Return (already_done, remaining) counts."""
     limit_val = limit if limit is not None else len(jobs)
     to_process = jobs[:limit_val]
-    done = sum(1 for j in to_process if j.get("ats_url"))
+
+    # Count jobs that are done (success or permanent failure) or hit max attempts
+    PERMANENT_STATUSES = {"success", "no_apply_button"}
+
+    def is_done(job):
+        status = job.get("ats_extraction_status")
+        if status in PERMANENT_STATUSES:
+            return True
+        # Retryable but hit max attempts
+        if status and job.get("ats_attempt_count", 0) >= 3:
+            return True
+        # Legacy: old jobs with ats_url set
+        if "ats_extraction_status" not in job and "ats_url" in job:
+            return True
+        return False
+
+    done = sum(1 for j in to_process if is_done(j))
     return done, len(to_process) - done
 
 

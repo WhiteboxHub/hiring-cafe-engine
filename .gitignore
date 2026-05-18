@@ -1,13 +1,73 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
 venv/
 .venv/
+env/
+ENV/
+
+# Environment variables
 .env
-__pycache__/
-*.pyc
+.env.local
+.env.*.local
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
 *.log
 logs/
+*.log.*
+
+# Databases
 *.db
 *.sqlite
+*.sqlite3
+*.duckdb
+data/*.duckdb
+
+# Generated output files
 hiring_cafe_jobs.json
 hiring_cafe_by_ats.json
+dry_run_payload.json
+
+# Browser profiles (generated at runtime)
 chrome_profile/
-data/*.duckdb
+chrome_profile_worker*/
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# OS-specific
+Thumbs.db
+desktop.ini
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*.swo

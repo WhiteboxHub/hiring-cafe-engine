@@ -56,63 +56,69 @@ def _utc_now() -> datetime:
 
 def _to_utc_mysql(dt: datetime) -> str:
     """
-    Convert a datetime to a UTC value in MySQL DATETIME format 'YYYY-MM-DD HH:MM:SS'.
+    Convert a datetime to UTC in MySQL DATETIME format 'YYYY-MM-DD HH:MM:SS'.
 
-    ROOT CAUSE OF THE BUG
-    ─────────────────────
-    The server DB stores next_run_at as a MySQL DATETIME (no timezone).
-    The server-side Python code treats that stored value as UTC when comparing.
-    The old code sent LOCAL time (e.g. PDT '16:00:00') but the server read it
-    as UTC '16:00:00', meaning the schedule appeared perpetually overdue against
-    real UTC (~19:00), firing every 5 minutes and logging FAILED entries.
+    Handles both timezone-aware and naive datetimes:
+    - Aware: Convert to UTC
+    - Naive: Treat as local system time, convert to UTC
 
-    THE FIX: always send UTC values in MySQL-compatible format.
-    MySQL rejects ISO 8601 'Z' suffix — use 'YYYY-MM-DD HH:MM:SS' (UTC value).
+    Returns UTC timestamp in MySQL-compatible format (no 'Z' suffix).
     """
     if dt.tzinfo is None:
-        # Treat naive datetime as local, convert to UTC
-        import time as _time
-        import calendar
-        local_epoch = calendar.timegm(dt.timetuple())  # local → epoch
-        dt = datetime.utcfromtimestamp(local_epoch)
+        # Naive datetime: treat as local system time
+        # Use astimezone() with no args to attach local timezone, then convert to UTC
+        dt = dt.astimezone(timezone.utc)
     else:
-        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
-    return dt.strftime("%Y-%m-%d %H:%M:%S")
+        # Already timezone-aware: convert to UTC
+        dt = dt.astimezone(timezone.utc)
+
+    # Return as naive UTC string for MySQL
+    return dt.replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def get_next_run_from_cron(cron_expression: str, timezone_str: str = "America/Los_Angeles") -> str:
     """
-    Calculate the next run time from a cron expression.
+    Calculate the next run time from a cron expression in the specified timezone.
 
-    Uses the 'croniter' library if available (pip install croniter).
-    Falls back to a simple parser for the common '0 9,16 * * *' pattern
-    so the code works even without croniter installed.
+    Returns UTC timestamp in MySQL DATETIME format 'YYYY-MM-DD HH:MM:SS'.
 
-    Returns a UTC ISO 8601 string with 'Z' suffix so the server can
-    compare it against offset-aware datetimes without errors.
+    Uses croniter/pytz if available for full cron support.
+    Falls back to built-in parser for simple patterns like '0 9,16 * * *'.
     """
-    now = datetime.now()
+    # Get current time in target timezone
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo(timezone_str)
+    except ImportError:
+        # Python < 3.9 fallback
+        try:
+            import pytz
+            tz = pytz.timezone(timezone_str)
+        except ImportError:
+            logger.warning(f"No timezone library available. Treating times as local.")
+            tz = None
+
+    # Get timezone-aware current time
+    if tz:
+        now_local = datetime.now(tz)
+    else:
+        now_local = datetime.now().astimezone()  # Local timezone
 
     # ── Try croniter first (most accurate) ────────────────────────────────
     try:
         from croniter import croniter
-        import pytz
-        tz = pytz.timezone(timezone_str)
-        now_local = datetime.now(tz)
         cron = croniter(cron_expression, now_local)
-        next_run = cron.get_next(datetime)
-        # next_run from croniter with tz-aware start is tz-aware
+        next_run = cron.get_next(datetime)  # Returns timezone-aware datetime
         utc_str = _to_utc_mysql(next_run)
-        logger.info(f"Next run calculated via croniter: {next_run} -> UTC: {utc_str}")
+        logger.info(f"Next run (croniter): {next_run.isoformat()} -> UTC: {utc_str}")
         return utc_str
     except ImportError:
-        logger.warning("croniter/pytz not installed. Using built-in cron parser. "
-                       "Run:  venv\\Scripts\\pip install croniter pytz  for full cron support.")
+        logger.warning("croniter not installed. Using built-in cron parser. "
+                       "Install: pip install croniter")
     except Exception as e:
         logger.warning(f"croniter failed ({e}). Falling back to built-in parser.")
 
     # ── Built-in fallback: parse hour field only ───────────────────────────
-    # Handles patterns like '0 9,16 * * *' or '0 9 * * *'
     try:
         parts = cron_expression.strip().split()
         if len(parts) >= 2:
@@ -122,26 +128,35 @@ def get_next_run_from_cron(cron_expression: str, timezone_str: str = "America/Lo
             hours  = sorted([int(h.strip()) for h in hour_field.split(",") if h.strip().isdigit()])
             minute = int(minute_field) if minute_field.isdigit() else 0
 
-            today = now.date()
+            # Build candidates in local timezone
+            today = now_local.date()
             for h in hours:
-                candidate = datetime(today.year, today.month, today.day, h, minute, 0)
-                if candidate > now:
+                if tz:
+                    candidate = datetime(today.year, today.month, today.day, h, minute, 0, tzinfo=tz)
+                else:
+                    candidate = datetime(today.year, today.month, today.day, h, minute, 0).astimezone()
+
+                if candidate > now_local:
                     utc_str = _to_utc_mysql(candidate)
-                    logger.info(f"Next run calculated via built-in parser: {candidate} -> UTC: {utc_str}")
+                    logger.info(f"Next run (built-in): {candidate.isoformat()} -> UTC: {utc_str}")
                     return utc_str
 
             # All today's slots passed → first slot tomorrow
             tomorrow = today + timedelta(days=1)
-            next_run = datetime(tomorrow.year, tomorrow.month, tomorrow.day, hours[0], minute, 0)
+            if tz:
+                next_run = datetime(tomorrow.year, tomorrow.month, tomorrow.day, hours[0], minute, 0, tzinfo=tz)
+            else:
+                next_run = datetime(tomorrow.year, tomorrow.month, tomorrow.day, hours[0], minute, 0).astimezone()
+
             utc_str = _to_utc_mysql(next_run)
-            logger.info(f"Next run calculated via built-in parser (tomorrow): {next_run} -> UTC: {utc_str}")
+            logger.info(f"Next run (built-in, tomorrow): {next_run.isoformat()} -> UTC: {utc_str}")
             return utc_str
 
     except Exception as e:
         logger.warning(f"Built-in cron parser failed ({e}). Using +1 day fallback.")
 
     # ── Last resort ────────────────────────────────────────────────────────
-    fallback = now + timedelta(days=1)
+    fallback = now_local + timedelta(days=1)
     utc_str = _to_utc_mysql(fallback)
     logger.warning(f"Using fallback next_run_at: {utc_str}")
     return utc_str
@@ -393,8 +408,9 @@ def main():
         # Determine run name for the email report
         run_name = "Manual Run"
         if schedule:
-            # Check current hour to identify which scheduled slot this is
-            now_hour = datetime.now().hour
+            # Check current hour in local timezone to identify which scheduled slot this is
+            now_local = datetime.now().astimezone()
+            now_hour = now_local.hour
             if 8 <= now_hour <= 11:
                 run_name = "9 AM Run"
             elif 15 <= now_hour <= 18:

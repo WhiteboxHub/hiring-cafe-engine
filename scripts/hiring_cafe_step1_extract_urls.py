@@ -104,7 +104,7 @@ Examples:
                         # Enriched fields
                         "job_tittle": j.get("job_tittle"),
                         "location": j.get("location"),
-                        "comapany": j.get("comapany"),
+                        "company": j.get("company"),
                         "type": j.get("type"),
                         "city": j.get("city"),
                         "state": j.get("state"),

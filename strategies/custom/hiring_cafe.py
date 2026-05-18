@@ -13,7 +13,7 @@ from urllib.parse import quote
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from selenium.common.exceptions import TimeoutException, NoSuchElementException, WebDriverException
 from core.locator_loader import LocatorLoader
 
 # Initialize locator loader
@@ -418,7 +418,7 @@ class HiringCafeStrategy(BaseStrategy):
             "state": None,
             "country": None,
             "type": None,
-            "comapany": None,
+            "company": None,
             "company_description": None,
         }
         if not lines:
@@ -517,18 +517,18 @@ class HiringCafeStrategy(BaseStrategy):
                 continue
 
             # Company — line with ":" whose left side passes checks
-            if ':' in line and not data['comapany']:
+            if ':' in line and not data['company']:
                 name = line.split(':', 1)[0].strip().rstrip('.,;-')
                 if name and not _is_salary(name) and not _is_multi_city(name):
-                    data['comapany'] = name
+                    data['company'] = name
                     right = line.split(':', 1)[1].strip()
                     if right and not data['company_description']:
                         data['company_description'] = right
                 continue
 
             # Candidate company (no colon) — first line that isn't junk
-            if not data['comapany'] and not _is_junk(line) and not _is_multi_city(line):
-                data['comapany'] = line
+            if not data['company'] and not _is_junk(line) and not _is_multi_city(line):
+                data['company'] = line
                 continue
 
             # Everything else → description
@@ -620,7 +620,7 @@ class HiringCafeStrategy(BaseStrategy):
                         "external_id": job_id,
                         "title": title,
                         "url": url,
-                        "company": enriched_data.get("comapany"),
+                        "company": enriched_data.get("company"),
                         "location": enriched_data.get("location"),
                         "scraped_at": datetime.now().isoformat(),
                         **enriched_data
@@ -854,7 +854,24 @@ class HiringCafeStrategy(BaseStrategy):
 
     def _get_ats_link_from_job_page(self, job_id: str) -> dict | None:
         """
-        6-layer ATS URL extraction with fallback button detection:
+        6-layer ATS URL extraction with fallback button detection.
+
+        Returns dict with status tracking:
+        {
+            "ats_url": str | None,
+            "ats_platform": str | None,
+            "status": "success" | "no_apply_button" | "blocked" | "timeout" | "browser_error" | "invalid_url",
+            "error_detail": str  # human-readable error description
+        }
+
+        Status values:
+        - success: ATS URL extracted and validated
+        - no_apply_button: No apply button found (permanent failure)
+        - blocked: Page blocked / Cloudflare challenge detected
+        - timeout: Page load timeout
+        - browser_error: WebDriver crash or connection lost
+        - invalid_url: URL extracted but failed validation
+        - retryable: Temporary error, safe to retry
 
         Layer 1+2: DOM check + page source regex (no clicking needed)
         Layer 3:   _find_apply_button (primary XPath + fallbacks + scroll) → click → new tab
@@ -902,7 +919,12 @@ class HiringCafeStrategy(BaseStrategy):
             if ats_url and is_likely_ats_url(ats_url):
                 platform = detect_ats_platform(ats_url) or "unknown"
                 logger.info(f"[DOM/Regex] hiring_cafe_url: {job_url} -> ats_url: {ats_url}")
-                return {"ats_url": ats_url, "ats_platform": platform}
+                return {
+                    "ats_url": ats_url,
+                    "ats_platform": platform,
+                    "status": "success",
+                    "error_detail": None
+                }
 
             # ── Layer 3: Find Apply button (primary + fallbacks) and click ─────
             btn = self._find_apply_button()
@@ -978,9 +1000,20 @@ class HiringCafeStrategy(BaseStrategy):
                         if ats_url and is_likely_ats_url(ats_url):
                             platform = detect_ats_platform(ats_url) or "unknown"
                             logger.info(f"[NewTab] hiring_cafe_url: {job_url} -> ats_url: {ats_url}")
-                            return {"ats_url": ats_url, "ats_platform": platform}
+                            return {
+                                "ats_url": ats_url,
+                                "ats_platform": platform,
+                                "status": "success",
+                                "error_detail": None
+                            }
                         elif ats_url:
                             logger.debug(f"Rejected new-tab URL: {ats_url}")
+                            return {
+                                "ats_url": None,
+                                "ats_platform": None,
+                                "status": "invalid_url",
+                                "error_detail": f"Extracted URL failed validation: {ats_url}"
+                            }
                     else:
                         # ── Layer 4: Same-tab redirect ────────────────────────
                         time.sleep(1)
@@ -988,7 +1021,12 @@ class HiringCafeStrategy(BaseStrategy):
                         if "hiring.cafe" not in current.lower() and is_likely_ats_url(current):
                             platform = detect_ats_platform(current) or "unknown"
                             logger.info(f"[SameTab] hiring_cafe_url: {job_url} -> ats_url: {current}")
-                            return {"ats_url": current, "ats_platform": platform}
+                            return {
+                                "ats_url": current,
+                                "ats_platform": platform,
+                                "status": "success",
+                                "error_detail": None
+                            }
 
                         # ── Layer 5: Page source after click ──────────────────
                         time.sleep(2)
@@ -997,22 +1035,58 @@ class HiringCafeStrategy(BaseStrategy):
                             ats_url = candidates[0]
                             platform = detect_ats_platform(ats_url) or "unknown"
                             logger.info(f"[PostClick/Regex] hiring_cafe_url: {job_url} -> ats_url: {ats_url}")
-                            return {"ats_url": ats_url, "ats_platform": platform}
+                            return {
+                                "ats_url": ats_url,
+                                "ats_platform": platform,
+                                "status": "success",
+                                "error_detail": None
+                            }
             else:
                 logger.warning(f"Apply button not found for {job_id} (all XPaths failed)")
+                return {
+                    "ats_url": None,
+                    "ats_platform": None,
+                    "status": "no_apply_button",
+                    "error_detail": "Apply button not found after trying all XPath selectors"
+                }
 
             logger.info(f"[Failed] hiring_cafe_url: {job_url} -> ats_url: null")
-            return None
+            return {
+                "ats_url": None,
+                "ats_platform": None,
+                "status": "retryable",
+                "error_detail": "Click succeeded but no ATS URL found in any layer"
+            }
 
+        except TimeoutException as e:
+            logger.warning(f"Timeout loading page for {job_id}: {e}")
+            return {
+                "ats_url": None,
+                "ats_platform": None,
+                "status": "timeout",
+                "error_detail": f"Page load timeout: {str(e)[:200]}"
+            }
+        except WebDriverException as e:
+            logger.error(f"Browser error for {job_id}: {e}")
+            return {
+                "ats_url": None,
+                "ats_platform": None,
+                "status": "browser_error",
+                "error_detail": f"WebDriver error: {str(e)[:200]}"
+            }
         except Exception as e:
-            logger.warning(f"Error getting ATS link for {job_id}: {e}")
-            logger.info(f"hiring_cafe_url: {job_url} -> ats_url: null")
+            logger.error(f"Unexpected error getting ATS link for {job_id}: {e}", exc_info=True)
             try:
                 if len(self.driver.window_handles) > 1:
                     self.driver.switch_to.window(self.driver.window_handles[0])
             except Exception:
                 pass
-            return None
+            return {
+                "ats_url": None,
+                "ats_platform": None,
+                "status": "retryable",
+                "error_detail": f"Unexpected error: {type(e).__name__}: {str(e)[:200]}"
+            }
 
     # ─────────────────────────────────────────────────────────────────────────────
     # REST OF STRATEGY
@@ -1039,16 +1113,38 @@ class HiringCafeStrategy(BaseStrategy):
         consecutive_failures = 0
 
         # ── Count resume state ───────────────────────────────────────────────
-        already_done = sum(1 for j in to_process if "ats_url" in j)
-        remaining    = len(to_process) - already_done
+        # Skip jobs with permanent failures or successes, retry retryable ones
+        PERMANENT_STATUSES = {"success", "no_apply_button"}  # Don't retry these
+
+        def should_process(job):
+            """Check if job needs processing or retry."""
+            # Never attempted
+            if "ats_extraction_status" not in job:
+                return True
+
+            status = job.get("ats_extraction_status")
+
+            # Success or permanent failure - skip
+            if status in PERMANENT_STATUSES:
+                return False
+
+            # Retryable failures - check attempt count
+            attempt_count = job.get("ats_attempt_count", 0)
+            if attempt_count >= 3:  # Max 3 attempts
+                logger.debug(f"Skipping {job.get('job_id')}: max attempts reached ({attempt_count})")
+                return False
+
+            return True
+
+        pending = [j for j in to_process if should_process(j)]
+        already_done = len(to_process) - len(pending)
+
         if already_done:
             logger.info(
-                "⏭️  Resuming: %d/%d jobs already processed, skipping them...",
+                "⏭️  Resuming: %d/%d jobs already processed/max-attempts, skipping them...",
                 already_done, len(to_process),
             )
-        logger.info("🔗 Step 2: Extracting ATS URLs for %d jobs...", remaining)
-
-        pending = [j for j in to_process if "ats_url" not in j]
+        logger.info("🔗 Step 2: Extracting ATS URLs for %d jobs (includes retries)...", len(pending))
         if self._step2_shuffle_pending and len(pending) > 1:
             random.shuffle(pending)
             logger.info("🔀 Shuffled %d pending jobs (HIRING_CAFE_STEP2_SHUFFLE_PENDING=1)", len(pending))
@@ -1094,13 +1190,27 @@ class HiringCafeStrategy(BaseStrategy):
 
             # Mutate job dict IN-PLACE — reflected immediately in `jobs`
             if ats:
-                job["ats_url"]      = ats["ats_url"]
-                job["ats_platform"] = ats["ats_platform"]
-                logger.info(f"  hiring_cafe_url: {hiring_cafe_url} -> ats_url: {ats['ats_url']}")
-                consecutive_failures = 0
+                job["ats_url"]      = ats.get("ats_url")
+                job["ats_platform"] = ats.get("ats_platform")
+                job["ats_extraction_status"] = ats.get("status", "unknown")
+                job["ats_error_detail"] = ats.get("error_detail")
+                job["ats_attempt_count"] = job.get("ats_attempt_count", 0) + 1
+                job["last_attempted_at"] = datetime.now().isoformat()
+
+                if ats.get("status") == "success":
+                    logger.info(f"  hiring_cafe_url: {hiring_cafe_url} -> ats_url: {ats['ats_url']}")
+                    consecutive_failures = 0
+                else:
+                    logger.warning(f"  hiring_cafe_url: {hiring_cafe_url} -> status: {ats.get('status')} ({ats.get('error_detail')})")
+                    consecutive_failures += 1
             else:
-                job["ats_url"]      = None   # mark as attempted so resume skips it
+                # Legacy: old function returned None instead of dict
+                job["ats_url"]      = None
                 job["ats_platform"] = None
+                job["ats_extraction_status"] = "retryable"
+                job["ats_error_detail"] = "Extraction returned None (legacy path)"
+                job["ats_attempt_count"] = job.get("ats_attempt_count", 0) + 1
+                job["last_attempted_at"] = datetime.now().isoformat()
                 logger.info(f"  hiring_cafe_url: {hiring_cafe_url} -> ats_url: null")
                 consecutive_failures += 1
 
@@ -1515,7 +1625,7 @@ class HiringCafeStrategy(BaseStrategy):
                         "scraped_at": j.get("scraped_at"),
                         "job_tittle": j.get("job_tittle"),
                         "location": j.get("location"),
-                        "comapany": j.get("comapany"),
+                        "company": j.get("company"),
                         "type": j.get("type"),
                         "city": j.get("city"),
                         "state": j.get("state"),
