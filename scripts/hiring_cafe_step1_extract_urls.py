@@ -96,7 +96,7 @@ Examples:
                     {
                         "job_id": j.get("job_id"),
                         "title": j.get("title"),
-                        "hiring_cafe_url": j.get("url") or f"https://hiring.cafe/viewjob/{j.get('job_id')}",
+                        "hiring_cafe_url": j.get("url") or f"https://hiring.cafe/job/{j.get('job_id')}",
                         "ats_url": None,
                         "ats_platform": None,
                         "source_keywords": j.get("source_keywords"),

@@ -78,8 +78,8 @@ def is_likely_ats_url(url: str) -> bool:
 
 
 def _job_id_from_href(href: str) -> str | None:
-    """Extract job ID from href like '/viewjob/p16gu5rnyh9yhp7v'."""
+    """Extract job ID from href like '/job/p16gu5rnyh9yhp7v'."""
     if not href:
         return None
-    match = re.search(r"/viewjob/([a-zA-Z0-9_-]+)", href)
+    match = re.search(r"/(?:job|viewjob)/([a-zA-Z0-9_-]+)", href)
     return match.group(1) if match else None

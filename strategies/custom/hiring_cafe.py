@@ -20,10 +20,11 @@ from core.locator_loader import LocatorLoader
 locators = LocatorLoader()
 
 def _job_id_from_href(href: str) -> str | None:
-    """Extract job ID from href like '/viewjob/p16gu5rnyh9yhp7v'."""
+    """Extract job ID from href like '/job/p16gu5rnyh9yhp7v'."""
     if not href:
         return None
-    match = re.search(r"/viewjob/([a-zA-Z0-9_-]+)", href)
+    # Support both new /job/ format and legacy /viewjob/ format
+    match = re.search(r"/(?:job|viewjob)/([a-zA-Z0-9_-]+)", href)
     return match.group(1) if match else None
 
 
@@ -878,7 +879,7 @@ class HiringCafeStrategy(BaseStrategy):
         Layer 4:   Same-tab redirect detection
         Layer 5:   Page source regex after click
         """
-        job_url = f"{self.base_url}/viewjob/{job_id}"
+        job_url = f"{self.base_url}/job/{job_id}"
 
         # Job IDs that persistently fail — log page source snippet for diagnosis
         DEBUG_JOB_IDS = {
@@ -1159,7 +1160,7 @@ class HiringCafeStrategy(BaseStrategy):
             hiring_cafe_url = (
                 job.get("url")
                 or job.get("hiring_cafe_url")
-                or f"{self.base_url}/viewjob/{jid}"
+                or f"{self.base_url}/job/{jid}"
             )
             logger.info(f"Enriching job {step_idx}/{len(pending)}: {jid}")
 
@@ -1288,7 +1289,7 @@ class HiringCafeStrategy(BaseStrategy):
                     jid = job.get("job_id") or job.get("external_id")
                     if not jid:
                         continue
-                    hiring_cafe_url = job.get("url") or job.get("hiring_cafe_url") or f"{self.base_url}/viewjob/{jid}"
+                    hiring_cafe_url = job.get("url") or job.get("hiring_cafe_url") or f"{self.base_url}/job/{jid}"
                     ats = self._get_ats_link_from_job_page(jid)
                     job["ats_url"] = ats["ats_url"] if ats else None
                     job["ats_platform"] = ats["ats_platform"] if ats else None
@@ -1332,37 +1333,80 @@ class HiringCafeStrategy(BaseStrategy):
 
     def _is_page_blocked(self) -> bool:
         """
-        Detect if hiring.cafe returned its empty React shell (blocked / rate-limited).
-        Uses page source size + element counts as fingerprints from observed logs.
+        Detect if hiring.cafe returned a Cloudflare challenge or empty React shell.
+
+        Detection layers:
+          1. Cloudflare Turnstile challenge strings in page source (primary — catches new CF challenges)
+          2. Page title contains 'just a moment' or 'security check'
+          3. Known blocked page source sizes (legacy)
+          4. Known blocked div/link count fingerprints (legacy)
         """
         try:
             src = self.driver.page_source
+            src_lower = src.lower()
             src_len = len(src)
+
+            # ── Layer 1: Cloudflare Turnstile / challenge strings ────────────────
+            cf_signals = [
+                "verify you are human",
+                "cf-turnstile",
+                "challenges.cloudflare.com",
+                "performing security verification",
+                "ray id:",
+                "cloudflare ray id",
+                "enable javascript and cookies",
+                "one more step",
+                "checking your browser",
+            ]
+            for signal in cf_signals:
+                if signal in src_lower:
+                    logger.warning(
+                        "⚠️ Cloudflare challenge detected: page contains '%s' (source len=%d)",
+                        signal, src_len,
+                    )
+                    return True
+
+            # ── Layer 2: Page title check ────────────────────────────────────────
+            try:
+                title = self.driver.title.lower()
+                if any(t in title for t in ["just a moment", "security check", "attention required", "cloudflare"]):
+                    logger.warning("⚠️ Cloudflare challenge detected via page title: '%s'", self.driver.title)
+                    return True
+            except Exception:
+                pass
+
+            # ── Layer 3: Known blocked page source sizes (legacy) ────────────────
             blocked_sizes = locators.get("blocked_thresholds", "page_sizes", [])
             if src_len in blocked_sizes:
-                logger.warning(f"⚠️ Blocked page detected: source length {src_len} matches known blocked fingerprint")
+                logger.warning("⚠️ Blocked page detected: source length %d matches known blocked fingerprint", src_len)
                 return True
 
             if src_len < 70000:
-                logger.debug(f"Detected suspicious small page source: {src_len} chars")
+                logger.debug("Detected suspicious small page source: %d chars", src_len)
 
+            # ── Layer 4: Known blocked div/link count fingerprints (legacy) ──────
             try:
                 div_count = len(self.driver.find_elements(By.CSS_SELECTOR, "div"))
                 link_count = len(self.driver.find_elements(By.CSS_SELECTOR, "a"))
                 blocked_divs = locators.get("blocked_thresholds", "div_counts", [])
                 blocked_links = locators.get("blocked_thresholds", "link_count")
                 if div_count in blocked_divs and link_count == blocked_links:
-                    logger.warning(f"⚠️ Blocked page detected: divs={div_count}, links={link_count} matches blocked fingerprint")
+                    logger.warning(
+                        "⚠️ Blocked page detected: divs=%d, links=%d matches blocked fingerprint",
+                        div_count, link_count,
+                    )
                     return True
             except Exception:
                 pass
+
         except Exception as e:
-            logger.debug(f"Error checking for blocked page: {e}")
+            logger.debug("Error checking for blocked page: %s", e)
         return False
 
     def _wait_for_jobs_to_load(self, timeout: int = 15) -> bool:
         """
         Wait until we are on hiring.cafe AND job links appear in the DOM.
+        Tries both relative (href^=/viewjob/) and absolute (href*=/viewjob/) selectors.
         """
         current_url = self.driver.current_url
         if "hiring.cafe" not in current_url.lower():
@@ -1372,16 +1416,37 @@ class HiringCafeStrategy(BaseStrategy):
             )
             return False
 
+        # Try primary selector from config (contains /viewjob/)
+        selector = locators.get("selectors", "job_link")
+        fallback_selectors = [
+            selector,
+            'a[href*="/job/"]',                           # new format (primary)
+            'a[href*="/viewjob/"]',                       # legacy format fallback
+            'a[href^="https://hiring.cafe/job/"]',        # fully-qualified new
+            'a[href^="https://hiring.cafe/viewjob/"]',    # fully-qualified legacy
+        ]
+        for sel in fallback_selectors:
+            try:
+                WebDriverWait(self.driver, timeout).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, sel))
+                )
+                logger.info("✅ Job content detected on page (selector: %s)", sel)
+                return True
+            except TimeoutException:
+                logger.debug("Selector did not find jobs within %ds: %s", timeout, sel)
+                timeout = 5  # reduce timeout for subsequent fallback attempts
+
+        # Debug: log what links ARE on the page to diagnose selector drift
         try:
-            selector = locators.get("selectors", "job_link")
-            WebDriverWait(self.driver, timeout).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, selector))
-            )
-            logger.info("✅ Job content detected on page")
-            return True
-        except TimeoutException:
-            logger.debug("Timed out waiting for job links to appear")
-            return False
+            all_links = self.driver.find_elements(By.CSS_SELECTOR, "a[href]")
+            sample_hrefs = [el.get_attribute("href") for el in all_links[:10]]
+            logger.warning("🔍 No job links found. Sample <a href> on page: %s", sample_hrefs)
+            src_len = len(self.driver.page_source)
+            logger.warning("🔍 Page source length: %d chars", src_len)
+        except Exception as dbg_err:
+            logger.debug("Debug link scan failed: %s", dbg_err)
+
+        return False
 
     def find_jobs_for_keyword(self, keyword: str, max_retries: int = 5) -> list[dict]:
         """
@@ -1618,7 +1683,7 @@ class HiringCafeStrategy(BaseStrategy):
                     {
                         "job_id": j.get("job_id"),
                         "title": j.get("title"),
-                        "hiring_cafe_url": j.get("hiring_cafe_url") or j.get("url") or f"https://hiring.cafe/viewjob/{j.get('job_id')}",
+                        "hiring_cafe_url": j.get("hiring_cafe_url") or j.get("url") or f"https://hiring.cafe/job/{j.get('job_id')}",
                         "ats_url": j.get("ats_url"),
                         "ats_platform": j.get("ats_platform"),
                         "source_keywords": j.get("source_keywords"),

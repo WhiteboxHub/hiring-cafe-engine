@@ -1,6 +1,6 @@
 {
   "selectors": {
-    "job_link": "a[href^=\"/viewjob/\"]"
+    "job_link": "a[href*=\"/job/\"]"
   },
   "xpaths": {
     "apply_now_button": "//button[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'apply')] | //a[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'apply') and not(contains(@href, 'hiring.cafe'))]",

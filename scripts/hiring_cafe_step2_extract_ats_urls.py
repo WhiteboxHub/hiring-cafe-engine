@@ -146,10 +146,12 @@ def main() -> int:
     for j in jobs:
         jid = j.get("job_id") or j.get("external_id")
         url = j.get("hiring_cafe_url") or j.get("url")
-        if not jid and url and "viewjob/" in str(url):
-            jid = str(url).rstrip("/").split("viewjob/")[-1].split("?")[0]
+        if not jid and url and ("/job/" in str(url) or "/viewjob/" in str(url)):
+            import re as _re
+            m = _re.search(r"/(?:job|viewjob)/([a-zA-Z0-9_-]+)", str(url))
+            jid = m.group(1) if m else None
         if not url and jid:
-            url = f"https://hiring.cafe/viewjob/{jid}"
+            url = f"https://hiring.cafe/job/{jid}"
         if jid:
             j["job_id"] = jid
         if url:

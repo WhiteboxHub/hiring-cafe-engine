@@ -63,7 +63,7 @@ Examples:
                 j["ats_platform"] = j["ats"].get("platform")
             if "hiring_cafe_url" not in j:
                 j["hiring_cafe_url"] = j.get("url") or j.get("job_posting_url") or (
-                    f"https://hiring.cafe/viewjob/{j.get('job_id')}" if j.get("job_id") else None
+                    f"https://hiring.cafe/job/{j.get('job_id')}" if j.get("job_id") else None
                 )
         by_ats = categorize_jobs_by_ats(jobs)
 
