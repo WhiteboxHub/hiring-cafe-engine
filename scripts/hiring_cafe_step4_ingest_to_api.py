@@ -224,16 +224,27 @@ def extract_workable_details(driver, url):
 def _build_job_listing(job: dict, platform: str, driver=None) -> dict | None:
     """
     Build and validate a job listing dict ready for the API.
-    Returns None if the job should be skipped (e.g. no valid URL).
+    Returns None if the job should be skipped (e.g. no ats_url or no valid URL).
+
+    RULE: Only inject jobs that have a valid ats_url.
+    Jobs with ats_url = null are skipped — they have no confirmed external
+    application link and should not be sent to the API.
     """
     job_id  = job.get('job_id')
-    ats_url = _sanitize_url(job.get('ats_url'))           # ← sanitize here
-    hiring_cafe_url = _sanitize_url(job.get('hiring_cafe_url'))
 
-    job_url = ats_url or hiring_cafe_url
-    if not job_url:
-        logger.warning(f"Skipping job {job_id}: no valid job_url after sanitization")
+    # ── Require a non-null ats_url — skip anything without one ───────────────
+    raw_ats_url = job.get('ats_url')
+    if not raw_ats_url:
+        logger.info(f"Skipping job {job_id}: ats_url is null — no external ATS link found")
         return None
+
+    ats_url = _sanitize_url(raw_ats_url)
+    if not ats_url:
+        logger.warning(f"Skipping job {job_id}: ats_url '{raw_ats_url}' failed URL sanitization")
+        return None
+
+    hiring_cafe_url = _sanitize_url(job.get('hiring_cafe_url'))
+    job_url = ats_url  # Always use ats_url — hiring_cafe_url is never the apply target
 
     company_name    = _resolve_company_name(job)
     title           = (job.get('job_tittle') or job.get('title') or 'Unknown Title')[:255]
