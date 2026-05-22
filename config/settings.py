@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     # Browser
     CHROME_USER_DATA_DIR: str = "./chrome_profile"
     HEADLESS: bool = False
+    CHROMEDRIVER_PATH: str | None = None
 
     # Proxy
     PROXY_URL: str | None = None

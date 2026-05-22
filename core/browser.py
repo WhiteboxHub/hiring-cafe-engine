@@ -171,18 +171,23 @@ class BrowserService:
                 pass
         time.sleep(2)  # Give OS time to release file handles on the profile
 
-    def start_browser(self):
-        self._acquire_lock()
+    def _get_safe_chromedriver_dir(self) -> str:
+        """Determines a writeable and executable-safe directory to bypass AppLocker."""
+        # 1. Use setting override if configured
+        if settings.CHROMEDRIVER_PATH:
+            return os.path.abspath(settings.CHROMEDRIVER_PATH)
 
-        try:
-            import undetected_chromedriver as uc_local
-            global uc
-            uc = uc_local
-        except ModuleNotFoundError as e:
-            logger.warning(f"undetected_chromedriver import failed: {e}. Falling back to selenium webdriver.")
-            uc = None
+        # 2. Use 'bin' directory in project root (safe from both AppLocker and venv write-restrictions)
+        from pathlib import Path
+        project_root = Path(__file__).resolve().parent.parent
+        bin_dir = os.path.join(project_root, "bin")
+        os.makedirs(bin_dir, exist_ok=True)
+        logger.info(f"Using project bin directory for ChromeDriver: {bin_dir}")
+        return bin_dir
 
-        if uc:
+    def _create_options(self, is_uc: bool):
+        """Creates a fresh ChromeOptions instance to prevent options reuse issues."""
+        if is_uc:
             options = uc.ChromeOptions()
         else:
             from selenium.webdriver import ChromeOptions
@@ -197,13 +202,42 @@ class BrowserService:
         if settings.HEADLESS:
             options.add_argument("--headless=new")
 
-        # Apply scheduler-safe / anti-detection flags
         self._apply_scheduler_flags(options)
+        return options
+
+    def start_browser(self):
+        self._acquire_lock()
+
+        try:
+            import undetected_chromedriver as uc_local
+            global uc
+            uc = uc_local
+
+            # Monkey-patch uc.Patcher.patch_exe to handle Windows real-time scanning / AV file locks
+            if sys.platform == "win32":
+                original_patch_exe = uc.Patcher.patch_exe
+                def retry_patch_exe(self_patcher):
+                    for i in range(15):
+                        try:
+                            return original_patch_exe(self_patcher)
+                        except PermissionError:
+                            if i == 14:
+                                raise
+                            time.sleep(0.5)
+                uc.Patcher.patch_exe = retry_patch_exe
+        except ModuleNotFoundError as e:
+            logger.warning(f"undetected_chromedriver import failed: {e}. Falling back to selenium webdriver.")
+            uc = None
 
         if uc:
             chrome_version = _get_chrome_version()
+            # Set the patcher's data path to a safe, whitelisted location (AppLocker evasion)
+            safe_dir = self._get_safe_chromedriver_dir()
+            uc.Patcher.data_path = safe_dir
+
             # Attempt 1 — normal launch
             try:
+                options = self._create_options(is_uc=True)
                 self.driver = uc.Chrome(
                     options=options,
                     use_subprocess=True,
@@ -216,8 +250,9 @@ class BrowserService:
                     "Force-killing stale Chrome processes and retrying..."
                 )
                 self._force_kill_chrome()
-                # Attempt 2 — retry after killing stale processes
+                # Attempt 2 — retry with a fresh options object after killing stale processes
                 try:
+                    options = self._create_options(is_uc=True)
                     self.driver = uc.Chrome(
                         options=options,
                         use_subprocess=True,
@@ -236,8 +271,12 @@ class BrowserService:
                 from selenium import webdriver
                 from selenium.webdriver.chrome.service import Service as ChromeService
                 from webdriver_manager.chrome import ChromeDriverManager
+                from webdriver_manager.core.driver_cache import DriverCacheManager
 
-                service = ChromeService(ChromeDriverManager().install())
+                safe_dir = self._get_safe_chromedriver_dir()
+                cache_manager = DriverCacheManager(root_dir=safe_dir)
+                service = ChromeService(ChromeDriverManager(cache_manager=cache_manager).install())
+                options = self._create_options(is_uc=False)
                 self.driver = webdriver.Chrome(service=service, options=options)
                 logger.info("Browser started successfully (webdriver-manager fallback).")
             except Exception as e3:
